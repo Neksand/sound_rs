@@ -106,6 +106,6 @@ Python / Rust Developer
 
 ---
 
-## 📜 License
+## 📜 License 
 
 Licensed under the **MIT License** — free for personal and commercial use.
