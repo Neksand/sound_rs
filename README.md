@@ -31,8 +31,11 @@ pip install sound_rs
 ```python
 import sound_rs
 
-# Play a WAV file
+# Supports common formats
 sound_rs.play_audio("sound.wav")
+sound_rs.play_audio("sound.mp3")
+sound_rs.play_audio("sound.m4a")
+sound_rs.play_audio("sound.flac")
 ```
 
 ### 2️⃣ From NumPy Array 
@@ -72,17 +75,17 @@ sound_rs.play_sine_wave(440.0, 1.0, 44100)
 
 ## 🛠️ Roadmap
 
-| Step | Feature | Description |
-|------|----------|-------------|
-| ✅ 1 | **WAV playback** | Core playback for `.wav` files |
-| 🔜 2 | **Support for MP3, OGG, FLAC** | Add support for popular formats |
-| 🔜 3 | **Real-time audio recording** | Record microphone input and save/play |
-| 🔜 4 | **Volume & playback control** | Pause, resume, seek, adjust volume |
+| Step | Feature                        | Description |
+|------|--------------------------------|-------------|
+| ✅ 1 | **WAV playback**               | Core playback for `.wav` files |
+| ✅ 2 | **Support for MP3, FLAC, M4A** | Add support for popular formats |
+| 🔜 3 | **Real-time audio recording**  | Record microphone input and save/play |
+| 🔜 4 | **Volume & playback control**  | Pause, resume, seek, adjust volume |
 | 🔜 5 | **Asynchronous streaming API** | Non-blocking playback for large or streamed audio |
-| 🔜 6 | **Audio synthesis engine** | Generate tones, envelopes, and waveforms |
-| 🔜 7 | **Audio visualization tools** | Waveform and frequency spectrum visualization |
+| 🔜 6 | **Audio synthesis engine**     | Generate tones, envelopes, and waveforms |
+| 🔜 7 | **Audio visualization tools**  | Waveform and frequency spectrum visualization |
 | 🔜 8 | **AI-powered voice filtering** | Integration with deep learning filters (noise removal, EQ) |
-| 🔜 9 | **FFI plugin system** | Allow C/C++/Rust extensions for custom audio effects |
+| 🔜 9 | **FFI plugin system**          | Allow C/C++/Rust extensions for custom audio effects |
 
 ---
 

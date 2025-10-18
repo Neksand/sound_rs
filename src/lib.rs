@@ -1,117 +1,195 @@
 use pyo3::prelude::*;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::fs::File;
-use std::io::Read;
 use std::sync::{Arc, Mutex};
+use symphonia::core::audio::{AudioBufferRef, Signal};
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
-// WAV file data structure
-struct WavData {
+// Audio data structure for multi-format support
+struct AudioData {
     sample_rate: u32,
     channels: u16,
     bits_per_sample: u16,
-    data: Vec<u8>,
+    data: Vec<f32>,
 }
 
-impl WavData {
+impl AudioData {
     fn load_from_file(path: &str) -> Result<Self, String> {
-        let mut file = File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).map_err(|e| format!("Cannot read file: {}", e))?;
+        // Open the file
+        let file = File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
-        // Basic WAV header validation
-        if buffer.len() < 44 {
-            return Err("File too small to be a WAV file".to_string());
+        // Create a hint to help the format registry guess the format
+        let mut hint = Hint::new();
+        if let Some(extension) = std::path::Path::new(path).extension() {
+            if let Some(ext_str) = extension.to_str() {
+                hint.with_extension(ext_str);
+            }
         }
 
-        if &buffer[0..4] != b"RIFF" {
-            return Err("Not a RIFF file".to_string());
-        }
+        // Use the default options for format, metadata, and decoder
+        let format_opts = FormatOptions::default();
+        let metadata_opts = MetadataOptions::default();
+        let decoder_opts = DecoderOptions::default();
 
-        if &buffer[8..12] != b"WAVE" {
-            return Err("Not a WAVE file".to_string());
-        }
+        // Probe the media format
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &metadata_opts)
+            .map_err(|e| format!("Format probing error: {}", e))?;
 
-        // Find fmt chunk
-        let mut fmt_offset = 12;
-        while fmt_offset + 8 <= buffer.len() {
-            let chunk_id = &buffer[fmt_offset..fmt_offset+4];
-            let chunk_size = u32::from_le_bytes([
-                buffer[fmt_offset+4], buffer[fmt_offset+5],
-                buffer[fmt_offset+6], buffer[fmt_offset+7]
-            ]) as usize;
+        // Get the format reader
+        let mut format = probed.format;
 
-            if chunk_id == b"fmt " {
-                if chunk_size < 16 {
-                    return Err("Invalid fmt chunk size".to_string());
-                }
+        // Get the default track
+        let track = format
+            .default_track()
+            .ok_or("No default track found")?;
 
-                let audio_format = u16::from_le_bytes([buffer[fmt_offset+8], buffer[fmt_offset+9]]);
-                if audio_format != 1 {
-                    return Err("Only PCM format supported".to_string());
-                }
+        // Create a decoder for the track
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &decoder_opts)
+            .map_err(|e| format!("Decoder error: {}", e))?;
 
-                let channels = u16::from_le_bytes([buffer[fmt_offset+10], buffer[fmt_offset+11]]);
-                let sample_rate = u32::from_le_bytes([
-                    buffer[fmt_offset+12], buffer[fmt_offset+13],
-                    buffer[fmt_offset+14], buffer[fmt_offset+15]
-                ]);
-                let bits_per_sample = u16::from_le_bytes([buffer[fmt_offset+22], buffer[fmt_offset+23]]);
+        let sample_rate = track.codec_params.sample_rate.ok_or("Unknown sample rate")?;
+        let channels = track.codec_params.channels.ok_or("Unknown channel layout")?.count();
+        let bits_per_sample = 32; // We convert everything to f32
 
-                // Find data chunk
-                let mut data_offset = fmt_offset + 8 + chunk_size;
-                while data_offset + 8 <= buffer.len() {
-                    let data_chunk_id = &buffer[data_offset..data_offset+4];
-                    let data_chunk_size = u32::from_le_bytes([
-                        buffer[data_offset+4], buffer[data_offset+5],
-                        buffer[data_offset+6], buffer[data_offset+7]
-                    ]) as usize;
+        let mut all_samples = Vec::new();
 
-                    if data_chunk_id == b"data" {
-                        let data_end = data_offset + 8 + data_chunk_size;
-                        if data_end > buffer.len() {
-                            return Err("Invalid data chunk size".to_string());
+        // Decode all packets
+        while let Ok(packet) = format.next_packet() {
+            // Decode the packet
+            let decoded = decoder.decode(&packet).map_err(|e| format!("Decoding error: {}", e))?;
+
+            // Process the audio buffer based on its type
+            match decoded {
+                AudioBufferRef::F32(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            all_samples.push(buf.chan(channel)[frame]);
                         }
-
-                        let audio_data = buffer[data_offset+8..data_end].to_vec();
-
-                        return Ok(WavData {
-                            sample_rate,
-                            channels,
-                            bits_per_sample,
-                            data: audio_data,
-                        });
                     }
-
-                    data_offset += 8 + data_chunk_size;
                 }
+                AudioBufferRef::U8(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
 
-                return Err("No data chunk found".to_string());
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert u8 to f32: [0, 255] -> [-1.0, 1.0]
+                            all_samples.push((sample as f32 - 128.0) / 128.0);
+                        }
+                    }
+                }
+                AudioBufferRef::U16(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert u16 to f32: [0, 65535] -> [-1.0, 1.0]
+                            all_samples.push((sample as f32 - 32768.0) / 32768.0);
+                        }
+                    }
+                }
+                AudioBufferRef::U32(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert u32 to f32: [0, 4294967295] -> [-1.0, 1.0]
+                            all_samples.push((sample as f32 - 2147483648.0) / 2147483648.0);
+                        }
+                    }
+                }
+                AudioBufferRef::S8(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert s8 to f32: [-128, 127] -> [-1.0, 1.0]
+                            all_samples.push(sample as f32 / 128.0);
+                        }
+                    }
+                }
+                AudioBufferRef::S16(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert s16 to f32: [-32768, 32767] -> [-1.0, 1.0]
+                            all_samples.push(sample as f32 / 32768.0);
+                        }
+                    }
+                }
+                AudioBufferRef::S32(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert s32 to f32: [-2147483648, 2147483647] -> [-1.0, 1.0]
+                            all_samples.push(sample as f32 / 2147483648.0);
+                        }
+                    }
+                }
+                AudioBufferRef::F64(buf) => {
+                    let frames = buf.frames();
+                    let channels = buf.spec().channels.count();
+
+                    for frame in 0..frames {
+                        for channel in 0..channels {
+                            let sample = buf.chan(channel)[frame];
+                            // Convert f64 to f32
+                            all_samples.push(sample as f32);
+                        }
+                    }
+                }
+                // Skip 24-bit formats for now as they're less common
+                AudioBufferRef::U24(_) | AudioBufferRef::S24(_) => {
+                    return Err("24-bit audio format not supported yet".to_string());
+                }
             }
-
-            fmt_offset += 8 + chunk_size;
         }
 
-        Err("No fmt chunk found".to_string())
+        Ok(AudioData {
+            sample_rate,
+            channels: channels as u16,
+            bits_per_sample,
+            data: all_samples,
+        })
+    }
+
+    // Helper function to check if file format is supported
+    fn is_format_supported(path: &str) -> bool {
+        let supported_extensions = ["wav", "mp3", "flac", "ogg", "m4a", "aac"];
+
+        if let Some(extension) = std::path::Path::new(path).extension() {
+            if let Some(ext_str) = extension.to_str() {
+                return supported_extensions.contains(&ext_str.to_lowercase().as_str());
+            }
+        }
+        false
     }
 }
 
-// Convert raw bytes to f32 samples
-fn decode_samples(wav_data: &WavData) -> Result<Vec<f32>, String> {
-    match wav_data.bits_per_sample {
-        8 => Ok(wav_data.data.iter().map(|&b| (b as f32 - 128.0) / 128.0).collect()),
-        16 => {
-            let mut result = Vec::with_capacity(wav_data.data.len() / 2);
-            for chunk in wav_data.data.chunks(2) {
-                if chunk.len() == 2 {
-                    let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0;
-                    result.push(sample);
-                }
-            }
-            Ok(result)
-        },
-        _ => Err(format!("Unsupported bits per sample: {}", wav_data.bits_per_sample))
-    }
-}
+// [Rest of the code remains exactly the same as your previous working version]
 
 // Resample audio to match device sample rate
 fn resample_samples(samples: &[f32], src_rate: u32, dst_rate: u32, channels: u16) -> Vec<f32> {
@@ -263,21 +341,25 @@ fn get_default_config() -> Result<cpal::StreamConfig, String> {
 
 // Python interface functions
 
-/// Play WAV audio file (original function)
+/// Play audio file (supports WAV, MP3, FLAC, OGG, M4A, AAC)
 #[pyfunction]
 fn play_audio(file_path: &str) -> PyResult<()> {
-    let wav_data = WavData::load_from_file(file_path)
+    // Check if format is supported
+    if !AudioData::is_format_supported(file_path) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Unsupported audio format. Supported: WAV, MP3, FLAC, OGG, M4A, AAC"
+        ));
+    }
+
+    let audio_data = AudioData::load_from_file(file_path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
 
     let config = get_default_config()
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
     // Audio processing pipeline
-    let samples = decode_samples(&wav_data)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
-
-    let resampled = resample_samples(&samples, wav_data.sample_rate, config.sample_rate.0, wav_data.channels);
-    let final_samples = convert_channels(&resampled, wav_data.channels, config.channels);
+    let resampled = resample_samples(&audio_data.data, audio_data.sample_rate, config.sample_rate.0, audio_data.channels);
+    let final_samples = convert_channels(&resampled, audio_data.channels, config.channels);
 
     play_from_buffer(&final_samples, &config)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
@@ -285,20 +367,46 @@ fn play_audio(file_path: &str) -> PyResult<()> {
     Ok(())
 }
 
+/// Check if file format is supported
+#[pyfunction]
+fn is_supported_format(file_path: &str) -> bool {
+    AudioData::is_format_supported(file_path)
+}
+
+/// Get audio file information
+#[pyfunction]
+fn get_audio_info(file_path: &str) -> PyResult<(u32, u16, f32)> {
+    if !AudioData::is_format_supported(file_path) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Unsupported audio format"
+        ));
+    }
+
+    let audio_data = AudioData::load_from_file(file_path)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
+
+    let duration = audio_data.data.len() as f32 / audio_data.sample_rate as f32 / audio_data.channels as f32;
+
+    Ok((audio_data.sample_rate, audio_data.channels, duration))
+}
+
 /// Stream large audio file in chunks (non-blocking)
 #[pyfunction]
 fn play_audio_streamed(file_path: &str, chunk_size: Option<usize>) -> PyResult<()> {
-    let wav_data = WavData::load_from_file(file_path)
+    if !AudioData::is_format_supported(file_path) {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Unsupported audio format"
+        ));
+    }
+
+    let audio_data = AudioData::load_from_file(file_path)
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
 
     let config = get_default_config()
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
 
-    let samples = decode_samples(&wav_data)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))?;
-
-    let resampled = resample_samples(&samples, wav_data.sample_rate, config.sample_rate.0, wav_data.channels);
-    let final_samples = convert_channels(&resampled, wav_data.channels, config.channels);
+    let resampled = resample_samples(&audio_data.data, audio_data.sample_rate, config.sample_rate.0, audio_data.channels);
+    let final_samples = convert_channels(&resampled, audio_data.channels, config.channels);
 
     let chunk_size = chunk_size.unwrap_or(4096);
     play_stream_from_buffer(&final_samples, &config, chunk_size)
@@ -330,7 +438,6 @@ fn play_sine_wave(frequency: f32, duration: f32, sample_rate: u32) -> PyResult<(
 
     Ok(())
 }
-
 
 // Conditional compilation for numpy feature
 #[cfg(feature = "numpy")]
@@ -422,6 +529,8 @@ fn play_audio_async(_file_path: String) -> PyResult<()> {
 #[pymodule]
 fn sound_rs(_py: Python<'_>, m: Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(play_audio, &m)?)?;
+    m.add_function(wrap_pyfunction!(is_supported_format, &m)?)?;
+    m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_audio_streamed, &m)?)?;
     m.add_function(wrap_pyfunction!(play_audio_async, &m)?)?;

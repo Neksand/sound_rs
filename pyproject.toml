@@ -6,6 +6,7 @@ build-backend = "maturin"
 
 [project]
 name = "sound_rs"
+description = "Fast Rust-powered audio playback library for Python"
 requires-python = ">=3.7"
 readme = "README.md"
 classifiers = [
@@ -14,5 +15,6 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+urls = { "Homepage" = "https://github.com/Neksand/sound_rs", "Repository" = "https://github.com/Neksand/sound_rs", "Issues" = "https://github.com/Neksand/sound_rs/issues" }
 [tool.maturin]
 features = ["pyo3/extension-module"]
