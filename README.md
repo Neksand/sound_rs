@@ -1,9 +1,9 @@
 # 🎵 sound_rs
 
-**sound_rs** is a fast, Rust-powered audio playback library for Python —
-decoding with [symphonia](https://github.com/pdeljanov/Symphonia), output through
-[cpal](https://github.com/RustAudio/cpal), so the same code runs on macOS,
-Windows and Linux.
+**sound_rs** is a fast, Rust-powered audio playback library for Python that I built
+and maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia),
+output through [cpal](https://github.com/RustAudio/cpal), so the same code runs on
+macOS, Windows and Linux.
 
 ---
 
@@ -86,8 +86,9 @@ python examples/benchmark.py --compare              # + sounddevice / soundfile
 python examples/benchmark.py --files a.mp3 b.flac   # decode table for real files
 ```
 
-Decoding 60 s of 44.1 kHz stereo, Apple M5 Pro, macOS 26.6, Python 3.14.7,
-release build, best of 5. `soundfile` is libsndfile (C, mpg123/flac):
+**Hardware and setup I measured on:** Apple M5 Pro, macOS 26.6.2, Python 3.14.7,
+release build (`lto = "fat"`, `opt-level = 3`), 60 s of 44.1 kHz stereo, best of 5
+runs, competitor is libsndfile (`soundfile` 0.14).
 
 | format | size | sound_rs | soundfile | result |
 |---|---|---|---|---|
@@ -103,13 +104,11 @@ Playback of a 3 s tone, overhead over the track duration:
 | sound_rs | 3.240 s | +0.239 s |
 | sounddevice | 3.234 s | +0.234 s |
 
-Both pay the same cost: opening and closing the audio stream on every call.
-That is the reason a persistent player object is on the roadmap — reuse the
-stream and the overhead drops to single-digit milliseconds.
-
-Where we do **not** win, plainly: MP3 decoding is ~20% behind libmpg123, and on
-uncompressed WAV there is no real race to win (both sides are a memcpy).
-
+Both pay the same cost: opening and closing the audio stream on every call. I want
+to be straight about the weak spots too: my MP3 decoding is ~20% behind libmpg123,
+and on uncompressed WAV there is no real race to win — both sides are a memcpy.
+The playback overhead is the number I intend to fix with a persistent stream, which
+should bring it down to single-digit milliseconds.
 
 ---
 
