@@ -1,539 +1,398 @@
-use pyo3::prelude::*;
+//! Fast cross-platform audio playback for Python.
+//!
+//! Decoding is done with symphonia, output with cpal. Every decoded format is
+//! converted to interleaved f32 in one place, then handed to the device with
+//! whatever sample format that device actually wants.
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{FromSample, SampleFormat, SizedSample};
+use pyo3::prelude::*;
 use std::fs::File;
-use std::sync::{Arc, Mutex};
-use symphonia::core::audio::{AudioBufferRef, Signal};
+use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::errors::Error as SymphoniaError;
+use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-// Audio data structure for multi-format support
-struct AudioData {
+/// Decoded audio, always interleaved f32.
+struct Audio {
     sample_rate: u32,
     channels: u16,
-    bits_per_sample: u16,
-    data: Vec<f32>,
+    samples: Vec<f32>,
 }
 
-impl AudioData {
-    fn load_from_file(path: &str) -> Result<Self, String> {
-        // Open the file
-        let file = File::open(path).map_err(|e| format!("Cannot open file: {}", e))?;
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-        // Create a hint to help the format registry guess the format
-        let mut hint = Hint::new();
-        if let Some(extension) = std::path::Path::new(path).extension() {
-            if let Some(ext_str) = extension.to_str() {
-                hint.with_extension(ext_str);
-            }
-        }
-
-        // Use the default options for format, metadata, and decoder
-        let format_opts = FormatOptions::default();
-        let metadata_opts = MetadataOptions::default();
-        let decoder_opts = DecoderOptions::default();
-
-        // Probe the media format
-        let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &format_opts, &metadata_opts)
-            .map_err(|e| format!("Format probing error: {}", e))?;
-
-        // Get the format reader
-        let mut format = probed.format;
-
-        // Get the default track
-        let track = format
-            .default_track()
-            .ok_or("No default track found")?;
-
-        // Create a decoder for the track
-        let mut decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &decoder_opts)
-            .map_err(|e| format!("Decoder error: {}", e))?;
-
-        let sample_rate = track.codec_params.sample_rate.ok_or("Unknown sample rate")?;
-        let channels = track.codec_params.channels.ok_or("Unknown channel layout")?.count();
-        let bits_per_sample = 32; // We convert everything to f32
-
-        let mut all_samples = Vec::new();
-
-        // Decode all packets
-        while let Ok(packet) = format.next_packet() {
-            // Decode the packet
-            let decoded = decoder.decode(&packet).map_err(|e| format!("Decoding error: {}", e))?;
-
-            // Process the audio buffer based on its type
-            match decoded {
-                AudioBufferRef::F32(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            all_samples.push(buf.chan(channel)[frame]);
-                        }
-                    }
-                }
-                AudioBufferRef::U8(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert u8 to f32: [0, 255] -> [-1.0, 1.0]
-                            all_samples.push((sample as f32 - 128.0) / 128.0);
-                        }
-                    }
-                }
-                AudioBufferRef::U16(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert u16 to f32: [0, 65535] -> [-1.0, 1.0]
-                            all_samples.push((sample as f32 - 32768.0) / 32768.0);
-                        }
-                    }
-                }
-                AudioBufferRef::U32(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert u32 to f32: [0, 4294967295] -> [-1.0, 1.0]
-                            all_samples.push((sample as f32 - 2147483648.0) / 2147483648.0);
-                        }
-                    }
-                }
-                AudioBufferRef::S8(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert s8 to f32: [-128, 127] -> [-1.0, 1.0]
-                            all_samples.push(sample as f32 / 128.0);
-                        }
-                    }
-                }
-                AudioBufferRef::S16(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert s16 to f32: [-32768, 32767] -> [-1.0, 1.0]
-                            all_samples.push(sample as f32 / 32768.0);
-                        }
-                    }
-                }
-                AudioBufferRef::S32(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert s32 to f32: [-2147483648, 2147483647] -> [-1.0, 1.0]
-                            all_samples.push(sample as f32 / 2147483648.0);
-                        }
-                    }
-                }
-                AudioBufferRef::F64(buf) => {
-                    let frames = buf.frames();
-                    let channels = buf.spec().channels.count();
-
-                    for frame in 0..frames {
-                        for channel in 0..channels {
-                            let sample = buf.chan(channel)[frame];
-                            // Convert f64 to f32
-                            all_samples.push(sample as f32);
-                        }
-                    }
-                }
-                // Skip 24-bit formats for now as they're less common
-                AudioBufferRef::U24(_) | AudioBufferRef::S24(_) => {
-                    return Err("24-bit audio format not supported yet".to_string());
-                }
-            }
-        }
-
-        Ok(AudioData {
-            sample_rate,
-            channels: channels as u16,
-            bits_per_sample,
-            data: all_samples,
-        })
-    }
-
-    // Helper function to check if file format is supported
-    fn is_format_supported(path: &str) -> bool {
-        let supported_extensions = ["wav", "mp3", "flac", "ogg", "m4a", "aac"];
-
-        if let Some(extension) = std::path::Path::new(path).extension() {
-            if let Some(ext_str) = extension.to_str() {
-                return supported_extensions.contains(&ext_str.to_lowercase().as_str());
-            }
-        }
-        false
+impl Audio {
+    fn duration(&self) -> f32 {
+        self.samples.len() as f32 / self.sample_rate as f32 / self.channels as f32
     }
 }
 
-// [Rest of the code remains exactly the same as your previous working version]
+/// Opens the container. This is also the format check: whatever symphonia can
+/// probe is what we support, so there is no extension list to keep in sync.
+fn open(path: &str) -> Result<Box<dyn FormatReader>, String> {
+    let file = File::open(path).map_err(|e| format!("Cannot open '{path}': {e}"))?;
+    let mut hint = Hint::new();
+    if let Some(ext) = Path::new(path).extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    symphonia::default::get_probe()
+        .format(
+            &hint,
+            MediaSourceStream::new(Box::new(file), Default::default()),
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map(|probed| probed.format)
+        .map_err(|e| format!("Unsupported or corrupt audio file '{path}': {e}"))
+}
 
-// Resample audio to match device sample rate
-fn resample_samples(samples: &[f32], src_rate: u32, dst_rate: u32, channels: u16) -> Vec<f32> {
-    if src_rate == dst_rate {
+fn decode(path: &str) -> Result<Audio, String> {
+    let mut format = open(path)?;
+
+    let (sample_rate, channels, mut decoder) = {
+        let track = format.default_track().ok_or("No audio track found")?;
+        let sample_rate = track
+            .codec_params
+            .sample_rate
+            .ok_or("Unknown sample rate")?;
+        let channels = track
+            .codec_params
+            .channels
+            .ok_or("Unknown channel layout")?
+            .count() as u16;
+        let decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| format!("Unsupported codec: {e}"))?;
+        (sample_rate, channels, decoder)
+    };
+
+    let mut samples = Vec::new();
+    let mut buffer: Option<SampleBuffer<f32>> = None;
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(e)) => {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    break;
+                }
+                return Err(format!("Read error: {e}"));
+            }
+            Err(SymphoniaError::ResetRequired) => break,
+            Err(e) => return Err(format!("Read error: {e}")),
+        };
+
+        let decoded = match decoder.decode(&packet) {
+            Ok(decoded) => decoded,
+            // A truncated tail is not a reason to throw away the whole file.
+            Err(SymphoniaError::IoError(e)) => {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    break;
+                }
+                return Err(format!("Decode error: {e}"));
+            }
+            Err(e) => return Err(format!("Decode error: {e}")),
+        };
+
+        // SampleBuffer does the integer/24-bit/f64 -> f32 conversion and the
+        // interleaving for us, for every sample format symphonia can produce.
+        let needs_new_buffer = buffer
+            .as_ref()
+            .map_or(true, |b| b.capacity() < decoded.capacity());
+        if needs_new_buffer {
+            buffer = Some(SampleBuffer::<f32>::new(
+                decoded.capacity() as u64,
+                *decoded.spec(),
+            ));
+        }
+        let buffer = buffer.as_mut().expect("buffer was just created");
+        buffer.copy_interleaved_ref(decoded);
+        samples.extend_from_slice(buffer.samples());
+    }
+
+    if samples.is_empty() {
+        return Err(format!("No audio data decoded from '{path}'"));
+    }
+
+    Ok(Audio {
+        sample_rate,
+        channels,
+        samples,
+    })
+}
+
+/// Linear-interpolating resampler. Works on interleaved frames so the channel
+/// layout survives; a naive per-sample index would shuffle channels together.
+fn resample(samples: &[f32], src_rate: u32, dst_rate: u32, channels: u16) -> Vec<f32> {
+    let ch = channels as usize;
+    if src_rate == dst_rate || ch == 0 {
         return samples.to_vec();
+    }
+
+    let frames = samples.len() / ch;
+    if frames == 0 {
+        return Vec::new();
     }
 
     let ratio = src_rate as f64 / dst_rate as f64;
-    let target_len = (samples.len() as f64 / ratio / channels as f64) as usize;
-    let mut result = Vec::with_capacity(target_len * channels as usize);
+    let target_frames = (frames as f64 / ratio) as usize;
+    let mut out = Vec::with_capacity(target_frames * ch);
 
-    for i in 0..target_len {
-        let src_index = (i as f64 * ratio * channels as f64) as usize;
-        if src_index < samples.len() {
-            result.push(samples[src_index]);
+    for i in 0..target_frames {
+        let src_pos = i as f64 * ratio;
+        let i0 = src_pos as usize;
+        let i1 = (i0 + 1).min(frames - 1);
+        let frac = (src_pos - i0 as f64) as f32;
+        for c in 0..ch {
+            let a = samples[i0 * ch + c];
+            let b = samples[i1 * ch + c];
+            out.push(a + (b - a) * frac);
         }
     }
-    result
+
+    out
 }
 
-// Convert between different channel layouts
-fn convert_channels(samples: &[f32], src_channels: u16, dst_channels: u16) -> Vec<f32> {
-    if src_channels == dst_channels {
+/// Converts an interleaved buffer from `src` to `dst` channels. Down-mixing
+/// stereo averages both channels; everything else repeats or truncates
+/// channels in order, which is what a simple mixer does.
+fn convert_channels(samples: &[f32], src: u16, dst: u16) -> Vec<f32> {
+    let (src, dst) = (src as usize, dst as usize);
+    if src == dst || src == 0 || dst == 0 {
         return samples.to_vec();
     }
 
-    if src_channels == 1 && dst_channels == 2 {
-        // Mono to Stereo - duplicate channel
-        samples.iter().flat_map(|&s| [s, s]).collect()
-    } else if src_channels == 2 && dst_channels == 1 {
-        // Stereo to Mono - average channels
-        samples.chunks(2).map(|c| c.iter().sum::<f32>() / c.len() as f32).collect()
-    } else {
-        // Generic channel conversion
-        let mut result = Vec::new();
-        for chunk in samples.chunks(src_channels as usize) {
-            for i in 0..dst_channels as usize {
-                result.push(*chunk.get(i).unwrap_or(&0.0));
-            }
-        }
-        result
+    if src == 2 && dst == 1 {
+        return samples.chunks_exact(2).map(|f| (f[0] + f[1]) * 0.5).collect();
     }
+
+    samples
+        .chunks_exact(src)
+        .flat_map(|frame| (0..dst).map(move |c| frame[c % src]))
+        .collect()
 }
 
-// Core audio playback function
-fn play_from_buffer(samples: &[f32], config: &cpal::StreamConfig) -> Result<(), String> {
-    let host = cpal::default_host();
-    let device = host.default_output_device()
-        .ok_or("No output device available")?;
-
-    let total_samples = samples.len();
-    let current_sample = Arc::new(Mutex::new(0));
-    let samples_data = Arc::new(samples.to_vec());
-
-    let err_fn = |err| eprintln!("Audio stream error: {}", err);
-
-    let stream = device.build_output_stream(
-        config,
-        move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let mut current = current_sample.lock().unwrap();
-
-            for out_sample in output.iter_mut() {
-                if *current < total_samples {
-                    *out_sample = samples_data[*current];
-                    *current += 1;
-                } else {
-                    *out_sample = 0.0;
-                }
-            }
-        },
-        err_fn,
-        None,
-    ).map_err(|e| format!("Stream creation failed: {}", e))?;
-
-    stream.play().map_err(|e| format!("Playback failed: {}", e))?;
-
-    // Wait for playback completion
-    let duration = total_samples as f32 / config.sample_rate.0 as f32 / config.channels as f32;
-    std::thread::sleep(std::time::Duration::from_secs_f32(duration + 0.1));
-
-    Ok(())
-}
-
-// Stream audio in chunks for large files
-fn play_stream_from_buffer(samples: &[f32], config: &cpal::StreamConfig, _chunk_size: usize) -> Result<(), String> {
-    let host = cpal::default_host();
-    let device = host.default_output_device()
-        .ok_or("No output device available")?;
-
-    let samples_data = Arc::new(samples.to_vec());
-    let current_pos = Arc::new(Mutex::new(0));
-    let total_samples = samples.len();
-
-    let err_fn = |err| eprintln!("Audio stream error: {}", err);
-
-    let stream = device.build_output_stream(
-        config,
-        {
-            let samples_data = Arc::clone(&samples_data);
-            let current_pos = Arc::clone(&current_pos);
-
-            move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                let mut pos = current_pos.lock().unwrap();
-                let output_len = output.len();
-
-                for i in 0..output_len {
-                    if *pos < total_samples {
-                        output[i] = samples_data[*pos];
-                        *pos += 1;
+fn build_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    data: Arc<Vec<f32>>,
+    position: Arc<AtomicUsize>,
+) -> Result<cpal::Stream, String>
+where
+    T: SizedSample + FromSample<f32>,
+{
+    let total = data.len();
+    device
+        .build_output_stream(
+            config,
+            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
+                for slot in output.iter_mut() {
+                    let i = position.fetch_add(1, Ordering::Relaxed);
+                    *slot = if i < total {
+                        T::from_sample(data[i])
                     } else {
-                        output[i] = 0.0;
-                    }
+                        T::from_sample(0.0f32)
+                    };
                 }
-            }
-        },
-        err_fn,
-        None,
-    ).map_err(|e| format!("Stream creation failed: {}", e))?;
-
-    stream.play().map_err(|e| format!("Playback failed: {}", e))?;
-
-    // Wait for streaming completion
-    while {
-        let pos = current_pos.lock().unwrap();
-        *pos < total_samples
-    } {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    Ok(())
+            },
+            |err| eprintln!("Audio stream error: {err}"),
+            None,
+        )
+        .map_err(|e| format!("Cannot open output stream: {e}"))
 }
 
-// Get default audio device configuration
-fn get_default_config() -> Result<cpal::StreamConfig, String> {
-    let host = cpal::default_host();
-    let device = host.default_output_device()
+/// The single playback path: resample to the device rate, fold to the device
+/// channel count, open a stream in the device's own sample format, block until
+/// the buffer is drained.
+fn play(samples: &[f32], src_rate: u32, src_channels: u16) -> Result<(), String> {
+    let device = cpal::default_host()
+        .default_output_device()
         .ok_or("No output device available")?;
+    let supported = device
+        .default_output_config()
+        .map_err(|e| format!("Cannot query output device: {e}"))?;
 
-    let supported_config = device.default_output_config()
-        .map_err(|e| format!("Config error: {}", e))?;
+    let out_rate = supported.sample_rate().0;
+    let out_channels = supported.channels();
 
-    Ok(cpal::StreamConfig {
-        channels: supported_config.channels(),
-        sample_rate: supported_config.sample_rate(),
+    let ready = convert_channels(
+        &resample(samples, src_rate, out_rate, src_channels),
+        src_channels,
+        out_channels,
+    );
+    let config = cpal::StreamConfig {
+        channels: out_channels,
+        sample_rate: supported.sample_rate(),
         buffer_size: cpal::BufferSize::Default,
-    })
-}
+    };
 
-// Python interface functions
+    let data = Arc::new(ready);
+    let position = Arc::new(AtomicUsize::new(0));
+    let stream = match supported.sample_format() {
+        SampleFormat::F32 => build_stream::<f32>(&device, &config, data.clone(), position.clone()),
+        SampleFormat::F64 => build_stream::<f64>(&device, &config, data.clone(), position.clone()),
+        SampleFormat::I16 => build_stream::<i16>(&device, &config, data.clone(), position.clone()),
+        SampleFormat::I32 => build_stream::<i32>(&device, &config, data.clone(), position.clone()),
+        SampleFormat::U8 => build_stream::<u8>(&device, &config, data.clone(), position.clone()),
+        SampleFormat::U16 => build_stream::<u16>(&device, &config, data.clone(), position.clone()),
+        other => return Err(format!("Unsupported output sample format: {other:?}")),
+    }?;
 
-/// Play audio file (supports WAV, MP3, FLAC, OGG, M4A, AAC)
-#[pyfunction]
-fn play_audio(file_path: &str) -> PyResult<()> {
-    // Check if format is supported
-    if !AudioData::is_format_supported(file_path) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Unsupported audio format. Supported: WAV, MP3, FLAC, OGG, M4A, AAC"
-        ));
+    stream.play().map_err(|e| format!("Playback failed: {e}"))?;
+
+    while position.load(Ordering::Relaxed) < data.len() {
+        std::thread::sleep(Duration::from_millis(20));
     }
-
-    let audio_data = AudioData::load_from_file(file_path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
-
-    let config = get_default_config()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    // Audio processing pipeline
-    let resampled = resample_samples(&audio_data.data, audio_data.sample_rate, config.sample_rate.0, audio_data.channels);
-    let final_samples = convert_channels(&resampled, audio_data.channels, config.channels);
-
-    play_from_buffer(&final_samples, &config)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
+    // Let the device finish playing what is already in its own buffer.
+    std::thread::sleep(Duration::from_millis(100));
     Ok(())
 }
 
-/// Check if file format is supported
+fn play_file(path: &str) -> Result<(), String> {
+    let audio = decode(path)?;
+    play(&audio.samples, audio.sample_rate, audio.channels)
+}
+
+fn to_pyerr(message: String) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(message)
+}
+
+/// Play audio file (WAV, MP3, FLAC, OGG, M4A, AAC and anything else symphonia probes).
+///
+/// Blocks until playback finishes, but releases the GIL, so other Python
+/// threads keep running.
+#[pyfunction]
+fn play_audio(py: Python<'_>, file_path: &str) -> PyResult<()> {
+    py.allow_threads(|| play_file(file_path)).map_err(to_pyerr)
+}
+
+/// Check if the file can be decoded, without decoding it.
 #[pyfunction]
 fn is_supported_format(file_path: &str) -> bool {
-    AudioData::is_format_supported(file_path)
+    open(file_path).is_ok()
 }
 
-/// Get audio file information
+/// Get `(sample_rate, channels, duration_seconds)` of an audio file.
 #[pyfunction]
-fn get_audio_info(file_path: &str) -> PyResult<(u32, u16, f32)> {
-    if !AudioData::is_format_supported(file_path) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Unsupported audio format"
-        ));
-    }
-
-    let audio_data = AudioData::load_from_file(file_path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
-
-    let duration = audio_data.data.len() as f32 / audio_data.sample_rate as f32 / audio_data.channels as f32;
-
-    Ok((audio_data.sample_rate, audio_data.channels, duration))
+fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> {
+    let audio = py.allow_threads(|| decode(file_path)).map_err(to_pyerr)?;
+    Ok((audio.sample_rate, audio.channels, audio.duration()))
 }
 
-/// Stream large audio file in chunks (non-blocking)
+/// Play a NumPy array of f32: 1D mono `(samples,)` or 2D `(channels, samples)`.
 #[pyfunction]
-fn play_audio_streamed(file_path: &str, chunk_size: Option<usize>) -> PyResult<()> {
-    if !AudioData::is_format_supported(file_path) {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "Unsupported audio format"
-        ));
-    }
+fn play_array(py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
+    #[cfg(feature = "numpy")]
+    {
+        use numpy::{PyArray1, PyArray2, PyArrayMethods};
 
-    let audio_data = AudioData::load_from_file(file_path)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(e))?;
-
-    let config = get_default_config()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    let resampled = resample_samples(&audio_data.data, audio_data.sample_rate, config.sample_rate.0, audio_data.channels);
-    let final_samples = convert_channels(&resampled, audio_data.channels, config.channels);
-
-    let chunk_size = chunk_size.unwrap_or(4096);
-    play_stream_from_buffer(&final_samples, &config, chunk_size)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    Ok(())
-}
-
-/// Generate a simple sine wave and play it
-#[pyfunction]
-fn play_sine_wave(frequency: f32, duration: f32, sample_rate: u32) -> PyResult<()> {
-    let config = get_default_config()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    let num_samples = (duration * sample_rate as f32) as usize;
-    let mut samples = Vec::with_capacity(num_samples * 2); // Stereo
-
-    for i in 0..num_samples {
-        let t = i as f32 / sample_rate as f32;
-        let value = (t * frequency * 2.0 * std::f32::consts::PI).sin() * 0.5;
-        // Stereo: same signal on both channels
-        samples.push(value);
-        samples.push(value);
-    }
-
-    let resampled = resample_samples(&samples, sample_rate, config.sample_rate.0, 2);
-    play_from_buffer(&resampled, &config)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    Ok(())
-}
-
-// Conditional compilation for numpy feature
-#[cfg(feature = "numpy")]
-use numpy::{PyArray1, PyArray2, PyArrayMethods};
-
-#[cfg(feature = "numpy")]
-/// Play audio from NumPy array (1D or 2D)
-#[pyfunction]
-fn play_array(_py: Python, array: Bound<PyAny>, sample_rate: u32) -> PyResult<()> {
-    let config = get_default_config()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-    // Try to extract as 1D array first
-    if let Ok(py_array) = array.extract::<Bound<PyArray1<f32>>>() {
-        let samples = unsafe { py_array.as_slice()? };
-
-        let resampled = resample_samples(samples, sample_rate, config.sample_rate.0, 1);
-        play_from_buffer(&resampled, &config)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-        return Ok(());
-    }
-
-    // Try to extract as 2D array (channels x samples)
-    if let Ok(py_array) = array.extract::<Bound<PyArray2<f32>>>() {
-        let slice2d = unsafe { py_array.as_array() };
-        let (channels, num_samples) = slice2d.dim();
-
-        // Convert 2D array to interleaved format
-        let mut interleaved = Vec::with_capacity(channels as usize * num_samples);
-        for sample_idx in 0..num_samples {
-            for channel_idx in 0..channels {
-                interleaved.push(slice2d[[channel_idx, sample_idx]]);
-            }
+        if let Ok(array) = array.extract::<Bound<'_, PyArray1<f32>>>() {
+            let samples = unsafe { array.as_slice()? };
+            return py
+                .allow_threads(|| play(samples, sample_rate, 1))
+                .map_err(to_pyerr);
         }
 
-        let resampled = resample_samples(&interleaved, sample_rate, config.sample_rate.0, channels as u16);
-        let final_samples = convert_channels(&resampled, channels as u16, config.channels);
+        if let Ok(array) = array.extract::<Bound<'_, PyArray2<f32>>>() {
+            let view = unsafe { array.as_array() };
+            let (channels, frames) = view.dim();
+            let mut interleaved = Vec::with_capacity(channels * frames);
+            for frame in 0..frames {
+                for channel in 0..channels {
+                    interleaved.push(view[[channel, frame]]);
+                }
+            }
+            return py
+                .allow_threads(|| play(&interleaved, sample_rate, channels as u16))
+                .map_err(to_pyerr);
+        }
 
-        play_from_buffer(&final_samples, &config)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-
-        return Ok(());
+        return Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+            "Input must be a 1D or 2D numpy array of float32",
+        ));
     }
 
-    Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-        "Input must be a 1D or 2D numpy array of f32"
-    ))
+    #[cfg(not(feature = "numpy"))]
+    {
+        let _ = (py, array, sample_rate);
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "NumPy support not enabled. Build with the 'numpy' feature.",
+        ))
+    }
 }
 
-#[cfg(not(feature = "numpy"))]
-/// Play audio from NumPy array (feature not enabled)
+/// Generate a sine tone and play it.
 #[pyfunction]
-fn play_array(_py: Python, _array: Bound<PyAny>, _sample_rate: u32) -> PyResult<()> {
-    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-        "NumPy support not enabled. Build with 'numpy' feature."
-    ))
+fn play_sine_wave(py: Python<'_>, frequency: f32, duration: f32, sample_rate: u32) -> PyResult<()> {
+    let frames = (duration.max(0.0) * sample_rate as f32) as usize;
+    let step = frequency * 2.0 * std::f32::consts::PI / sample_rate as f32;
+    let samples: Vec<f32> = (0..frames).map(|i| (i as f32 * step).sin() * 0.5).collect();
+    let rate = sample_rate.max(1);
+    py.allow_threads(|| play(&samples, rate, 1))
+        .map_err(to_pyerr)
 }
 
-// Conditional compilation for async feature
-#[cfg(feature = "async")]
-use tokio::runtime::Runtime;
-
-#[cfg(feature = "async")]
-/// Async audio playback using Tokio
-#[pyfunction]
-fn play_audio_async(file_path: String) -> PyResult<()> {
-    let rt = Runtime::new()
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Tokio runtime error: {}", e)))?;
-
-    rt.block_on(async {
-        tokio::task::spawn_blocking(move || {
-            play_audio(&file_path)
-        }).await
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Async task error: {}", e)))?
-    })
-}
-
-#[cfg(not(feature = "async"))]
-/// Async audio playback (feature not enabled)
-#[pyfunction]
-fn play_audio_async(_file_path: String) -> PyResult<()> {
-    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-        "Async support not enabled. Build with 'async' feature."
-    ))
-}
-
-// Python module definition
 #[pymodule]
-fn sound_rs(_py: Python<'_>, m: Bound<PyModule>) -> PyResult<()> {
+fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(play_audio, &m)?)?;
     m.add_function(wrap_pyfunction!(is_supported_format, &m)?)?;
     m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
-    m.add_function(wrap_pyfunction!(play_audio_streamed, &m)?)?;
-    m.add_function(wrap_pyfunction!(play_audio_async, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resample_keeps_stereo_interleaved() {
+        // 400 frames of (L=1.0, R=-1.0) at 48k -> 200 frames at 24k.
+        let input: Vec<f32> = (0..800)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
+        let out = resample(&input, 48000, 24000, 2);
+        assert_eq!(out.len(), 200 * 2, "frame count must scale with the rate");
+        assert!(out.iter().step_by(2).all(|&s| (s - 1.0).abs() < 1e-6));
+        assert!(out.iter().skip(1).step_by(2).all(|&s| (s + 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn resample_is_identity_at_same_rate() {
+        let input = vec![0.1f32, 0.2, 0.3, 0.4];
+        assert_eq!(resample(&input, 44100, 44100, 2), input);
+    }
+
+    #[test]
+    fn resample_upsamples_full_duration() {
+        let input: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        let out = resample(&input, 22050, 44100, 1);
+        assert_eq!(out.len(), 200);
+    }
+
+    #[test]
+    fn convert_mono_to_stereo_duplicates() {
+        assert_eq!(convert_channels(&[0.5, -0.5], 1, 2), vec![0.5, 0.5, -0.5, -0.5]);
+    }
+
+    #[test]
+    fn convert_stereo_to_mono_averages() {
+        assert_eq!(convert_channels(&[1.0, 0.0, -1.0, -1.0], 2, 1), vec![0.5, -1.0]);
+    }
+
+    #[test]
+    fn convert_keeps_frame_count() {
+        for (src, dst) in [(1u16, 2u16), (2, 1), (6, 2), (2, 6)] {
+            let input: Vec<f32> = (0..src as usize * 10).map(|i| i as f32).collect();
+            let out = convert_channels(&input, src, dst);
+            assert_eq!(out.len(), dst as usize * 10, "{src}->{dst}");
+        }
+    }
 }

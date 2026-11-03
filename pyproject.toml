@@ -2,19 +2,23 @@
 requires = ["maturin>=1.9,<2.0"]
 build-backend = "maturin"
 
-
-
 [project]
 name = "sound_rs"
 description = "Fast Rust-powered audio playback library for Python"
-requires-python = ">=3.7"
+requires-python = ">=3.8"
+license = { text = "MIT" }
 readme = "README.md"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Multimedia :: Sound/Audio",
+    "License :: OSI Approved :: MIT License",
 ]
 dynamic = ["version"]
 urls = { "Homepage" = "https://github.com/Neksand/sound_rs", "Repository" = "https://github.com/Neksand/sound_rs", "Issues" = "https://github.com/Neksand/sound_rs/issues" }
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.20"]
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
