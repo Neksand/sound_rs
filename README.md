@@ -76,30 +76,40 @@ sound_rs.play_sine_wave(440.0, 1.0, 44100)  # frequency, duration, sample rate
 
 ## 🧩 Benchmark
 
-`play_audio` is synchronous, so its wall-clock time is dominated by the track's own
-duration. The interesting numbers are **decode throughput** and **overhead**
+`play_audio` is synchronous, so its wall-clock time is dominated by the track's
+own duration. The interesting numbers are **decode throughput** and **overhead**
 (wall clock − audio duration).
 
 ```bash
-python examples/benchmark.py            # generated 3s tone
-python examples/benchmark.py --compare  # + sounddevice / soundfile, if installed
-python examples/benchmark.py --file song.mp3
+python examples/benchmark.py                        # generated 3s tone: decode + playback
+python examples/benchmark.py --compare              # + sounddevice / soundfile
+python examples/benchmark.py --files a.mp3 b.flac   # decode table for real files
 ```
 
-Measured on an Apple M5 Pro, macOS 26.6, Python 3.14.7, release build:
+Decoding 60 s of 44.1 kHz stereo, Apple M5 Pro, macOS 26.6, Python 3.14.7,
+release build, best of 5. `soundfile` is libsndfile (C, mpg123/flac):
 
-| Measurement | Result |
-|---|---|
-| Decode 3s 44.1 kHz mono WAV (`get_audio_info`) | **0.2 ms** (~660 M samples/s) |
-| Decode the same WAV with `wave` + NumPy | 0.1 ms |
-| Playback of that 3s tone | 3.24 s → **+0.24 s overhead** |
+| format | size | sound_rs | soundfile | result |
+|---|---|---|---|---|
+| WAV (PCM 16) | 10.6 MB | **5.6 ms** | 7.1 ms | 1.3× faster |
+| FLAC | 0.7 MB | **10.2 ms** | 26.1 ms | 2.6× faster |
+| MP3 | 1.0 MB | 19.6 ms | **16.1 ms** | 1.2× slower |
+| M4A (AAC) | 1.0 MB | 22.1 ms | unsupported | sound_rs only |
 
-Two things worth reading correctly:
+Playback of a 3 s tone, overhead over the track duration:
 
-- For **WAV** there is no decode race to win — both paths are essentially a memcpy.
-  The Rust decoder earns its keep on MP3/AAC/FLAC, which the stdlib cannot read at all.
-- The **+0.24 s** is per-call stream setup and teardown by CoreAudio, not decoding.
-  It is the reason a persistent player object is on the roadmap.
+| | wall clock | overhead |
+|---|---|---|
+| sound_rs | 3.240 s | +0.239 s |
+| sounddevice | 3.234 s | +0.234 s |
+
+Both pay the same cost: opening and closing the audio stream on every call.
+That is the reason a persistent player object is on the roadmap — reuse the
+stream and the overhead drops to single-digit milliseconds.
+
+Where we do **not** win, plainly: MP3 decoding is ~20% behind libmpg123, and on
+uncompressed WAV there is no real race to win (both sides are a memcpy).
+
 
 ---
 

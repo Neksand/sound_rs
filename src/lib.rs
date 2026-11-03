@@ -55,24 +55,26 @@ fn open(path: &str) -> Result<Box<dyn FormatReader>, String> {
 fn decode(path: &str) -> Result<Audio, String> {
     let mut format = open(path)?;
 
-    let (sample_rate, channels, mut decoder) = {
+    // Codec params are not always complete (AAC in MP4 has no channel layout
+    // in the container), so fall back to the first decoded frame's spec.
+    let (mut sample_rate, mut channels, n_frames, mut decoder) = {
         let track = format.default_track().ok_or("No audio track found")?;
-        let sample_rate = track
-            .codec_params
-            .sample_rate
-            .ok_or("Unknown sample rate")?;
-        let channels = track
-            .codec_params
-            .channels
-            .ok_or("Unknown channel layout")?
-            .count() as u16;
         let decoder = symphonia::default::get_codecs()
             .make(&track.codec_params, &DecoderOptions::default())
             .map_err(|e| format!("Unsupported codec: {e}"))?;
-        (sample_rate, channels, decoder)
+        (
+            track.codec_params.sample_rate,
+            track.codec_params.channels.map(|c| c.count() as u16),
+            track.codec_params.n_frames,
+            decoder,
+        )
     };
 
-    let mut samples = Vec::new();
+    // One allocation for the whole file instead of repeated Vec growth.
+    let mut samples = match (n_frames, channels) {
+        (Some(frames), Some(ch)) => Vec::with_capacity(frames as usize * ch as usize),
+        _ => Vec::new(),
+    };
     let mut buffer: Option<SampleBuffer<f32>> = None;
 
     loop {
@@ -100,6 +102,11 @@ fn decode(path: &str) -> Result<Audio, String> {
             Err(e) => return Err(format!("Decode error: {e}")),
         };
 
+        if channels.is_none() || sample_rate.is_none() {
+            channels.get_or_insert(decoded.spec().channels.count() as u16);
+            sample_rate.get_or_insert(decoded.spec().rate);
+        }
+
         // SampleBuffer does the integer/24-bit/f64 -> f32 conversion and the
         // interleaving for us, for every sample format symphonia can produce.
         let needs_new_buffer = buffer
@@ -121,8 +128,8 @@ fn decode(path: &str) -> Result<Audio, String> {
     }
 
     Ok(Audio {
-        sample_rate,
-        channels,
+        sample_rate: sample_rate.ok_or("Unknown sample rate")?,
+        channels: channels.ok_or("Unknown channel layout")?,
         samples,
     })
 }
@@ -209,8 +216,9 @@ where
 
 /// The single playback path: resample to the device rate, fold to the device
 /// channel count, open a stream in the device's own sample format, block until
-/// the buffer is drained.
-fn play(samples: &[f32], src_rate: u32, src_channels: u16) -> Result<(), String> {
+/// the buffer is drained. Takes ownership so an already-correct buffer is
+/// played without any extra copy.
+fn play(samples: Vec<f32>, src_rate: u32, src_channels: u16) -> Result<(), String> {
     let device = cpal::default_host()
         .default_output_device()
         .ok_or("No output device available")?;
@@ -221,11 +229,15 @@ fn play(samples: &[f32], src_rate: u32, src_channels: u16) -> Result<(), String>
     let out_rate = supported.sample_rate().0;
     let out_channels = supported.channels();
 
-    let ready = convert_channels(
-        &resample(samples, src_rate, out_rate, src_channels),
-        src_channels,
-        out_channels,
-    );
+    let ready = if src_rate == out_rate && src_channels == out_channels {
+        samples
+    } else {
+        convert_channels(
+            &resample(&samples, src_rate, out_rate, src_channels),
+            src_channels,
+            out_channels,
+        )
+    };
     let config = cpal::StreamConfig {
         channels: out_channels,
         sample_rate: supported.sample_rate(),
@@ -256,7 +268,7 @@ fn play(samples: &[f32], src_rate: u32, src_channels: u16) -> Result<(), String>
 
 fn play_file(path: &str) -> Result<(), String> {
     let audio = decode(path)?;
-    play(&audio.samples, audio.sample_rate, audio.channels)
+    play(audio.samples, audio.sample_rate, audio.channels)
 }
 
 fn to_pyerr(message: String) -> PyErr {
@@ -295,7 +307,7 @@ fn play_array(py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyRe
         if let Ok(array) = array.extract::<Bound<'_, PyArray1<f32>>>() {
             let samples = unsafe { array.as_slice()? };
             return py
-                .allow_threads(|| play(samples, sample_rate, 1))
+                .allow_threads(|| play(samples.to_vec(), sample_rate, 1))
                 .map_err(to_pyerr);
         }
 
@@ -309,7 +321,7 @@ fn play_array(py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyRe
                 }
             }
             return py
-                .allow_threads(|| play(&interleaved, sample_rate, channels as u16))
+                .allow_threads(|| play(interleaved, sample_rate, channels as u16))
                 .map_err(to_pyerr);
         }
 
@@ -334,7 +346,7 @@ fn play_sine_wave(py: Python<'_>, frequency: f32, duration: f32, sample_rate: u3
     let step = frequency * 2.0 * std::f32::consts::PI / sample_rate as f32;
     let samples: Vec<f32> = (0..frames).map(|i| (i as f32 * step).sin() * 0.5).collect();
     let rate = sample_rate.max(1);
-    py.allow_threads(|| play(&samples, rate, 1))
+    py.allow_threads(move || play(samples, rate, 1))
         .map_err(to_pyerr)
 }
 
