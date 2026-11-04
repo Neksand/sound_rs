@@ -68,7 +68,7 @@ fn probe_info(path: &str) -> Result<TrackInfo, String> {
         sample_rate: track.codec_params.sample_rate,
         channels: track.codec_params.channels.map(|c| c.count() as u16),
         frames: track.codec_params.n_frames,
-        delay: track.codec_params.delay.unwrap_or(0) as u64,
+        delay: priming_frames(path, track.codec_params.delay).unwrap_or(0) as u64,
         padding: track.codec_params.padding.unwrap_or(0) as u64,
     })
 }
@@ -86,23 +86,145 @@ fn prealloc_capacity(frames: Option<u64>, channels: Option<u16>, rate: Option<u3
     usize::try_from(cap).unwrap_or(0)
 }
 
-/// Drops the leading/trailing frames an encoder inserted. MP4/AAC reports
-/// neither, so its priming stays in the output; that is a decoder-side gap, not
-/// something this trim can invent.
-fn trim_gapless(samples: &mut Vec<f32>, delay: Option<u32>, padding: Option<u32>, channels: usize) {
-    if channels == 0 {
-        return;
+/// Iterates the child boxes of an ISO-BMFF buffer: `(fourcc, body)` pairs,
+/// where `body` excludes the box header.
+fn mp4_children(data: &[u8]) -> Vec<(&[u8; 4], &[u8])> {
+    let mut children = Vec::new();
+    let mut offset = 0usize;
+    while offset + 8 <= data.len() {
+        let size = u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+        let kind: &[u8; 4] = data[offset + 4..offset + 8].try_into().unwrap();
+        let (header, size) = match size {
+            1 => {
+                if offset + 16 > data.len() {
+                    break;
+                }
+                let large = u64::from_be_bytes(data[offset + 8..offset + 16].try_into().unwrap());
+                (16usize, usize::try_from(large).unwrap_or(usize::MAX))
+            }
+            0 => (8usize, data.len() - offset),
+            size => (8usize, size),
+        };
+        if size < header || offset + size > data.len() {
+            break;
+        }
+        children.push((kind, &data[offset + header..offset + size]));
+        offset += size;
     }
-    if let Some(delay) = delay {
-        let skip = (delay as usize).saturating_mul(channels).min(samples.len());
-        samples.drain(..skip);
+    children
+}
+
+fn mp4_child<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
+    mp4_children(data).into_iter().find(|(k, _)| *k == kind).map(|(_, body)| body)
+}
+
+/// AAC decoders emit priming frames before the real signal, and MP4 edit lists
+/// record how many via an `elst` `media_time`. Symphonia parses that box but
+/// does not expose it, so read the first audio track's edit list directly.
+/// Returns `None` for anything that does not look like a sound track edit.
+fn mp4_priming(path: &str) -> Option<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let mut file = File::open(path).ok()?;
+    let total = file.metadata().ok()?.len();
+
+    // Walk top-level boxes until `moov`, which may sit after a large `mdat`.
+    let moov = {
+        let mut offset = 0u64;
+        loop {
+            if offset + 8 > total {
+                return None;
+            }
+            file.seek(SeekFrom::Start(offset)).ok()?;
+            let mut header = [0u8; 16];
+            file.read_exact(&mut header[..8]).ok()?;
+            let mut size = u32::from_be_bytes(header[..4].try_into().ok()?) as u64;
+            let kind: [u8; 4] = header[4..8].try_into().ok()?;
+            let mut header_len = 8u64;
+            if size == 1 {
+                file.read_exact(&mut header[8..16]).ok()?;
+                size = u64::from_be_bytes(header[8..16].try_into().ok()?);
+                header_len = 16;
+            } else if size == 0 {
+                size = total - offset;
+            }
+            if size < header_len {
+                return None;
+            }
+            if &kind == b"moov" {
+                // A moov box is metadata; anything this large is not a normal file.
+                let payload = size - header_len;
+                if payload > 32 * 1024 * 1024 {
+                    return None;
+                }
+                let mut buf = vec![0u8; payload as usize];
+                file.read_exact(&mut buf).ok()?;
+                break buf;
+            }
+            offset += size;
+        }
+    };
+
+    for (kind, trak) in mp4_children(&moov) {
+        if kind != b"trak" {
+            continue;
+        }
+        let Some(mdia) = mp4_child(trak, b"mdia") else { continue };
+        let Some(hdlr) = mp4_child(mdia, b"hdlr") else { continue };
+        if hdlr.get(8..12) != Some(b"soun") {
+            continue;
+        }
+        let Some(elst) = mp4_child(trak, b"edts").and_then(|edts| mp4_child(edts, b"elst")) else {
+            return None;
+        };
+        let version = *elst.first()?;
+        let count = u32::from_be_bytes(elst.get(4..8)?.try_into().ok()?);
+        if version > 1 || count == 0 {
+            return None;
+        }
+        // Entry: segment_duration, then media_time (in media timescale = frames).
+        let media_time = if version == 1 {
+            i64::from_be_bytes(elst.get(16..24)?.try_into().ok()?)
+        } else {
+            i32::from_be_bytes(elst.get(12..16)?.try_into().ok()?) as i64
+        };
+        return (media_time > 0).then_some(media_time as u64);
     }
-    if let Some(padding) = padding {
-        let keep = samples
-            .len()
-            .saturating_sub((padding as usize).saturating_mul(channels));
-        samples.truncate(keep);
+
+    None
+}
+
+/// True when the file starts with an ISO-BMFF `ftyp` box.
+fn is_mp4(path: &str) -> bool {
+    use std::io::Read;
+
+    let mut header = [0u8; 8];
+    File::open(path)
+        .and_then(|mut f| f.read_exact(&mut header))
+        .map(|_| &header[4..8] == b"ftyp")
+        .unwrap_or(false)
+}
+
+/// Encoder priming in frames: what the container declared, or what the MP4 edit
+/// list says when only the muxer knows.
+fn priming_frames(path: &str, declared: Option<u32>) -> Option<u32> {
+    declared.or_else(|| {
+        if !is_mp4(path) {
+            return None;
+        }
+        mp4_priming(path).map(|frames| frames.min(u32::MAX as u64) as u32)
+    })
+}
+
+/// Appends a decoded chunk, skipping the first `skip` samples of the file.
+/// Done at append time so the encoder delay never costs a memmove of the whole
+/// buffer afterwards. Returns the skip still owed.
+fn append_skipping(samples: &mut Vec<f32>, chunk: &[f32], skip: usize) -> usize {
+    if skip >= chunk.len() {
+        return skip - chunk.len();
     }
+    samples.extend_from_slice(&chunk[skip..]);
+    0
 }
 
 fn decode(path: &str) -> Result<Audio, String> {
@@ -110,7 +232,7 @@ fn decode(path: &str) -> Result<Audio, String> {
 
     // Codec params are not always complete (AAC in MP4 has no channel layout
     // in the container), so fall back to the first decoded frame's spec.
-    let (mut sample_rate, mut channels, n_frames, delay, padding, mut decoder) = {
+    let (mut sample_rate, mut channels, n_frames, mut delay, padding, mut decoder) = {
         let track = format.default_track().ok_or("No audio track found")?;
         let decoder = symphonia::default::get_codecs()
             .make(&track.codec_params, &DecoderOptions::default())
@@ -126,8 +248,15 @@ fn decode(path: &str) -> Result<Audio, String> {
     };
 
     // One allocation for the whole file instead of repeated Vec growth.
+    // MP3/OGG declare the delay; AAC in MP4 only records it in the edit list.
+    delay = priming_frames(path, delay);
+
     let mut samples = Vec::with_capacity(prealloc_capacity(n_frames, channels, sample_rate));
     let mut buffer: Option<SampleBuffer<f32>> = None;
+    // Samples still owed to the encoder delay. Resolved once the channel count
+    // is known: AAC has no channel layout in the container until the first
+    // packet is decoded, and the skip is per channel.
+    let mut leading_skip: Option<usize> = None;
 
     loop {
         let packet = match format.next_packet() {
@@ -172,7 +301,9 @@ fn decode(path: &str) -> Result<Audio, String> {
         }
         let buffer = buffer.as_mut().expect("buffer was just created");
         buffer.copy_interleaved_ref(decoded);
-        samples.extend_from_slice(buffer.samples());
+        let owed = *leading_skip
+            .get_or_insert_with(|| delay.unwrap_or(0) as usize * channels.unwrap_or(0) as usize);
+        leading_skip = Some(append_skipping(&mut samples, buffer.samples(), owed));
     }
 
     if samples.is_empty() {
@@ -182,9 +313,13 @@ fn decode(path: &str) -> Result<Audio, String> {
     let channels = channels.ok_or("Unknown channel layout")?;
     let ch = channels as usize;
 
-    // MP3 and OGG declare the encoder delay and padding they insert; skip them
-    // so the decoded audio lines up with the original, as libsndfile does.
-    trim_gapless(&mut samples, delay, padding, ch);
+    // Trailing padding is dropped from the end, which is free.
+    if let Some(padding) = padding {
+        let keep = samples
+            .len()
+            .saturating_sub((padding as usize).saturating_mul(ch));
+        samples.truncate(keep);
+    }
     if samples.is_empty() {
         return Err(format!("'{path}' contains no audio after trimming encoder padding"));
     }
@@ -731,16 +866,62 @@ mod tests {
     }
 
     #[test]
-    fn trim_drops_encoder_padding_and_never_underflows() {
-        // 1 frame of delay, 1 of padding, 2 channels, 3 frames total.
-        let mut samples = vec![9.0f32; 3 * 2];
-        trim_gapless(&mut samples, Some(1), Some(1), 2);
-        assert_eq!(samples.len(), 2, "one frame in, one frame out");
+    fn append_skipping_drops_leading_frames_across_chunks() {
+        let mut out = Vec::new();
+        let mut skip = append_skipping(&mut out, &[1.0, 2.0], 3);
+        assert_eq!(skip, 1, "two of three samples consumed");
+        assert!(out.is_empty());
 
-        // A bogus header must empty the buffer rather than panic or wrap.
-        let mut samples = vec![1.0f32; 4];
-        trim_gapless(&mut samples, Some(u32::MAX), Some(u32::MAX), 2);
-        assert!(samples.is_empty());
+        skip = append_skipping(&mut out, &[3.0, 4.0, 5.0, 6.0], skip);
+        assert_eq!(skip, 0);
+        assert_eq!(out, vec![4.0, 5.0, 6.0], "only the delay is dropped");
+
+        // A delay longer than the file leaves nothing rather than wrapping.
+        assert_eq!(append_skipping(&mut out, &[7.0], 5), 4);
+    }
+
+    #[test]
+    fn mp4_edit_list_priming_is_read() {
+        fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = Vec::new();
+            out.extend(((8 + body.len()) as u32).to_be_bytes());
+            out.extend(kind);
+            out.extend(body);
+            out
+        }
+
+        let mut hdlr = vec![0u8; 4]; // version + flags
+        hdlr.extend([0u8; 4]); // predefined
+        hdlr.extend(b"soun");
+        hdlr.extend([0u8; 12]);
+
+        let mut elst = vec![0u8; 4]; // version 0 + flags
+        elst.extend(1u32.to_be_bytes()); // one entry
+        elst.extend(2_646_000u32.to_be_bytes()); // segment_duration
+        elst.extend(1024u32.to_be_bytes()); // media_time = priming
+        elst.extend(0x0001_0000u32.to_be_bytes()); // media_rate
+
+        let mut trak = boxed(b"mdia", &boxed(b"hdlr", &hdlr));
+        trak.extend(boxed(b"edts", &boxed(b"elst", &elst)));
+        let mut file = boxed(b"ftyp", b"isomisom00");
+        file.extend(boxed(b"moov", &boxed(b"trak", &trak)));
+
+        let path = std::env::temp_dir().join(format!("sound_rs_{}.m4a", std::process::id()));
+        std::fs::write(&path, &file).unwrap();
+        let priming = mp4_priming(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(priming, Some(1024));
+    }
+
+    #[test]
+    fn mp4_priming_is_none_for_junk() {
+        let path = std::env::temp_dir().join(format!("sound_rs_junk_{}.m4a", std::process::id()));
+        std::fs::write(&path, b"not an mp4 file at all").unwrap();
+        let priming = mp4_priming(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        assert_eq!(priming, None);
+        assert!(!is_mp4("/nonexistent"), "missing files are not mp4");
     }
 
     #[test]
@@ -787,3 +968,5 @@ mod tests {
         }
     }
 }
+
+

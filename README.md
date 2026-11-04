@@ -12,8 +12,8 @@ macOS, Windows and Linux.
 - **Formats:** WAV, MP3, FLAC, OGG/Vorbis, M4A, AAC — any bit depth, including 24-bit
 - **NumPy arrays:** play 1D mono `(samples,)` or 2D `(channels, samples)` float32 arrays
 - **Decode to array:** `load(path) -> (ndarray, sample_rate)`, shape `(frames, channels)`
-- **Gapless (MP3, OGG):** encoder delay and padding are trimmed, so decoded length matches the original. AAC/MP4 priming is not reported by the container and stays in the output (~45 ms)
-- **Fast metadata:** `get_audio_info` reads the container header (one packet is decoded for AAC, which carries no channel layout)
+- **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded length matches the original. MP4 priming comes from the edit list; at most one trailing frame can remain, because the container does not declare it
+- **Fast metadata:** `get_audio_info` reads the container header; for AAC, whose container carries no channel layout, one packet is decoded to learn it
 - **Resampling:** linear interpolation to the device rate, channel folding to the device layout
 - **Device-native output:** the stream is opened in whatever sample format the device wants (f32, i16, u16, ...)
 - **Non-blocking for others:** playback blocks the calling thread but releases the GIL, so other Python threads keep running
@@ -104,10 +104,10 @@ median and p95 of 7 runs, competitor is libsndfile (`soundfile` 0.14).
 
 | format | metadata | decode (median / p95) | libsndfile | result | PCM vs libsndfile |
 |---|---|---|---|---|---|
-| WAV (PCM 16) | 0.02 ms | **8.4 / 15.0 ms** | 11.3 ms | 1.3× faster | identical |
-| FLAC | 0.02 ms | **16.2 / 16.8 ms** | 41.3 ms | 2.5× faster | identical |
-| MP3 | 0.02 ms | 38.1 / 38.9 ms | **23.6 ms** | 1.6× slower | 1.9e-07 |
-| M4A (AAC) | 0.15 ms | 34.1 / 36.5 ms | unsupported | sound_rs only | — |
+| WAV (PCM 16) | 0.02 ms | **9.1 / 11.2 ms** | 11.4 ms | 1.25× faster | identical |
+| FLAC | 0.03 ms | **16.3 / 17.7 ms** | 41.0 ms | 2.5× faster | identical |
+| MP3 | 0.02 ms | 33.8 / 34.3 ms | **24.5 ms** | 1.4× slower | 1.9e-07 |
+| M4A (AAC) | 0.17 ms | 34.7 / 38.2 ms | unsupported | sound_rs only | matches ffmpeg to 8e-08 |
 
 Playback of a 3 s tone, overhead over the track duration (median of 5):
 
@@ -122,9 +122,9 @@ What the numbers say, including the unflattering parts:
   as reading a 3-second one, because it comes from the container header.
 - **PCM output matches libsndfile exactly** for WAV and FLAC, and to 1.9e-07
   for MP3 — both trim the encoder delay and padding, so sample N means the
-  same thing in both libraries. AAC/MP4 gets no such metadata from the
-  container, so `load()` keeps the decoder's priming (~45 ms).
-- **MP3 decoding is ~1.6× behind libmpg123.** That is the decoder itself, not
+  same thing in both libraries. For AAC/MP4 the priming is read from the MP4
+  edit list, which libsndfile cannot even decode.
+- **MP3 decoding is ~1.4× behind libmpg123.** That is the decoder itself, not
   the plumbing; fixing it means a different MP3 decoder.
 - **Playback overhead is stream setup and teardown**, ~0.1 s per call. Reducing
   it to single-digit milliseconds needs a persistent stream, which is the next
