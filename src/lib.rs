@@ -11,7 +11,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::errors::Error as SymphoniaError;
@@ -84,6 +84,25 @@ fn prealloc_capacity(frames: Option<u64>, channels: Option<u16>, rate: Option<u3
     let wanted = frames.saturating_mul(channels as u64);
     let cap = wanted.min(rate * channels as u64 * 60);
     usize::try_from(cap).unwrap_or(0)
+}
+
+/// Drops the leading/trailing frames an encoder inserted. MP4/AAC reports
+/// neither, so its priming stays in the output; that is a decoder-side gap, not
+/// something this trim can invent.
+fn trim_gapless(samples: &mut Vec<f32>, delay: Option<u32>, padding: Option<u32>, channels: usize) {
+    if channels == 0 {
+        return;
+    }
+    if let Some(delay) = delay {
+        let skip = (delay as usize).saturating_mul(channels).min(samples.len());
+        samples.drain(..skip);
+    }
+    if let Some(padding) = padding {
+        let keep = samples
+            .len()
+            .saturating_sub((padding as usize).saturating_mul(channels));
+        samples.truncate(keep);
+    }
 }
 
 fn decode(path: &str) -> Result<Audio, String> {
@@ -163,16 +182,11 @@ fn decode(path: &str) -> Result<Audio, String> {
     let channels = channels.ok_or("Unknown channel layout")?;
     let ch = channels as usize;
 
-    // Encoders for lossy formats prepend and append frames that are not part of
-    // the signal (MP3 encoder delay, AAC padding). Skip them so the decoded
-    // audio lines up with the original, as libsndfile does.
-    if let Some(delay) = delay {
-        let skip = (delay as usize * ch).min(samples.len());
-        samples.drain(..skip);
-    }
-    if let Some(padding) = padding {
-        let keep = samples.len().saturating_sub(padding as usize * ch);
-        samples.truncate(keep);
+    // MP3 and OGG declare the encoder delay and padding they insert; skip them
+    // so the decoded audio lines up with the original, as libsndfile does.
+    trim_gapless(&mut samples, delay, padding, ch);
+    if samples.is_empty() {
+        return Err(format!("'{path}' contains no audio after trimming encoder padding"));
     }
 
     Ok(Audio {
@@ -241,7 +255,8 @@ where
     T: SizedSample + FromSample<f32>,
 {
     let n = output.len().min(data.len().saturating_sub(position));
-    for (slot, sample) in output[..n].iter_mut().zip(&data[position..position + n]) {
+    let available = data.get(position..).unwrap_or(&[]);
+    for (slot, sample) in output[..n].iter_mut().zip(available) {
         *slot = T::from_sample(*sample);
     }
     for slot in output[n..].iter_mut() {
@@ -252,13 +267,28 @@ where
 
 /// How long the last real sample still needs before it reaches the DAC: the
 /// device's own latency plus the duration of the silence padding after it.
-fn drain_duration(latency: Duration, padding: usize, channels: u16, rate: u32) -> Duration {
-    let padding = Duration::from_secs_f64(padding as f64 / channels as f64 / rate as f64);
-    latency + padding
+/// `None` when the backend reports no playback timestamp, so the caller knows
+/// to fall back to a conservative wait instead of trusting a zero latency.
+fn drain_duration(
+    latency: Option<Duration>,
+    padding: usize,
+    channels: u16,
+    rate: u32,
+) -> Option<Duration> {
+    let latency = latency?;
+    let padding = Duration::from_secs_f64(
+        padding as f64 / channels.max(1) as f64 / rate.max(1) as f64,
+    );
+    Some(latency + padding)
+}
+
+/// True when this callback delivered the last sample of the track, whether or
+/// not the block was completely filled.
+fn block_completes(position: usize, written: usize, total: usize, output_len: usize) -> bool {
+    written < output_len || position + written >= total
 }
 
 /// Everything the real-time callback needs, shared with the play loop.
-#[derive(Clone)]
 struct PlaybackState {
     data: Arc<Vec<f32>>,
     position: Arc<AtomicUsize>,
@@ -285,26 +315,24 @@ where
                 let written = fill_block(output, &state.data, position);
                 state.position.store(position + written, Ordering::Relaxed);
 
-                if written < output.len() && state.drain_us.load(Ordering::Relaxed) == 0 {
+                let total = state.data.len();
+                if block_completes(position, written, total, output.len())
+                    && state.drain_us.load(Ordering::Relaxed) == 0
+                {
                     // This callback delivered the last real sample; record when
                     // it will actually be heard so play() can wait exactly.
                     let stamp = info.timestamp();
-                    let latency = stamp
-                        .playback
-                        .duration_since(&stamp.callback)
-                        .unwrap_or_default();
-                    let drain = drain_duration(
-                        latency,
-                        output.len() - written,
-                        state.channels,
-                        state.rate,
-                    );
-                    let _ = state.drain_us.compare_exchange(
-                        0,
-                        (drain.as_micros() as u64).max(1),
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                    );
+                    let latency = stamp.playback.duration_since(&stamp.callback);
+                    if let Some(drain) =
+                        drain_duration(latency, output.len() - written, state.channels, state.rate)
+                    {
+                        let _ = state.drain_us.compare_exchange(
+                            0,
+                            (drain.as_micros() as u64).max(1),
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        );
+                    }
                 }
             },
             move |err| {
@@ -373,17 +401,35 @@ fn play(samples: Vec<f32>, src_rate: u32, src_channels: u16) -> Result<(), Strin
 
     stream.play().map_err(|e| format!("Playback failed: {e}"))?;
 
-    // Wait until the callback has consumed the buffer, then for exactly as
-    // long as the last sample still needs to reach the device.
-    while position.load(Ordering::Relaxed) < data.len() {
+    // Wait until the callback has consumed the buffer, then for as long as the
+    // last sample still needs to reach the device. A callback that stops
+    // advancing means the device went away without an error: cpal only reports
+    // disconnects for non-default devices, so this watchdog is the only exit.
+    const STALL_TIMEOUT: Duration = Duration::from_secs(2);
+    let mut last_seen = position.load(Ordering::Relaxed);
+    let mut last_change = Instant::now();
+    loop {
+        let current = position.load(Ordering::Relaxed);
+        if current >= data.len() {
+            break;
+        }
         if error.lock().map(|e| e.is_some()).unwrap_or(false) {
             break;
         }
-        std::thread::sleep(Duration::from_millis(2));
+        if current != last_seen {
+            last_seen = current;
+            last_change = Instant::now();
+        } else if last_change.elapsed() > STALL_TIMEOUT {
+            return Err(
+                "Playback stalled for 2s: the output device stopped responding (disconnected?)"
+                    .to_string(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(5));
     }
 
     // The drain timestamp is published right after the position update, so a
-    // short spin is enough. Platforms that report no timestamp leave it at 0.
+    // short spin is enough. It stays 0 on backends that report no timestamp.
     let mut drain = drain_us.load(Ordering::Relaxed);
     for _ in 0..50 {
         if drain > 0 {
@@ -393,9 +439,11 @@ fn play(samples: Vec<f32>, src_rate: u32, src_channels: u16) -> Result<(), Strin
         drain = drain_us.load(Ordering::Relaxed);
     }
     let wait = if drain > 0 {
-        Duration::from_micros(drain) + Duration::from_millis(10)
+        // Margin covers cpal's own uncertainty about when `playback` starts
+        // relative to the callback buffer.
+        Duration::from_micros(drain) + Duration::from_millis(30)
     } else {
-        Duration::from_millis(100)
+        Duration::from_millis(150)
     };
     std::thread::sleep(wait);
 
@@ -454,8 +502,13 @@ fn sniff_spec(path: &str) -> Result<(u32, u16), String> {
     let decoded = decoder
         .decode(&packet)
         .map_err(|e| format!("Decode error: {e}"))?;
-    channel_hint.get_or_insert(decoded.spec().channels.count() as u16);
-    Ok((decoded.spec().rate, channel_hint.unwrap_or(0)))
+    let channels = channel_hint
+        .get_or_insert(decoded.spec().channels.count() as u16)
+        .to_owned();
+    if channels == 0 {
+        return Err("Unknown channel layout".to_string());
+    }
+    Ok((decoded.spec().rate, channels))
 }
 
 fn info_or_decode(path: &str) -> Result<(u32, u16, f32), String> {
@@ -480,11 +533,18 @@ fn info_or_decode(path: &str) -> Result<(u32, u16, f32), String> {
 /// Decode a file to `(array, sample_rate)`, shape `(frames, channels)`, float32.
 #[pyfunction]
 fn load<'py>(py: Python<'py>, file_path: &str) -> PyResult<(Bound<'py, PyAny>, u32)> {
-    let audio = py.allow_threads(|| decode(file_path)).map_err(to_pyerr)?;
-    let sample_rate = audio.sample_rate;
+    #[cfg(not(feature = "numpy"))]
+    {
+        let _ = (py, file_path);
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "NumPy support not enabled. Build with the 'numpy' feature.",
+        ));
+    }
 
     #[cfg(feature = "numpy")]
     {
+        let audio = py.allow_threads(|| decode(file_path)).map_err(to_pyerr)?;
+        let sample_rate = audio.sample_rate;
         use numpy::{PyArray1, PyArrayMethods};
 
         let channels = audio.channels as usize;
@@ -493,15 +553,7 @@ fn load<'py>(py: Python<'py>, file_path: &str) -> PyResult<(Bound<'py, PyAny>, u
         let shaped = flat
             .reshape((frames, channels))
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        return Ok((shaped.into_any(), sample_rate));
-    }
-
-    #[cfg(not(feature = "numpy"))]
-    {
-        let _ = audio;
-        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            "NumPy support not enabled. Build with the 'numpy' feature.",
-        ))
+        Ok((shaped.into_any(), sample_rate))
     }
 }
 
@@ -651,8 +703,44 @@ mod tests {
     #[test]
     fn drain_covers_device_latency_and_padding() {
         // 882 samples of padding at 2ch/44.1k = 10 ms, plus 20 ms device latency.
-        let drain = drain_duration(Duration::from_millis(20), 882, 2, 44_100);
+        let drain = drain_duration(Some(Duration::from_millis(20)), 882, 2, 44_100).unwrap();
         assert!((drain.as_secs_f64() - 0.030).abs() < 0.001, "{drain:?}");
+    }
+
+    #[test]
+    fn drain_is_unknown_without_a_device_timestamp() {
+        // A backend with no timestamp must not be read as "zero latency".
+        assert_eq!(drain_duration(None, 882, 2, 44_100), None);
+    }
+
+    #[test]
+    fn drain_is_published_when_the_last_block_is_full() {
+        // 512-sample blocks, 1024 samples total: the second block fills exactly,
+        // so the completion must be detected from the position, not the padding.
+        assert!(block_completes(512, 512, 1024, 512));
+        assert!(!block_completes(0, 512, 4096, 512));
+        assert!(block_completes(2048, 100, 4096, 512));
+    }
+
+    #[test]
+    fn fill_block_ignores_a_position_past_the_end() {
+        let data = vec![1.0f32, 2.0];
+        let mut out = [7.0f32; 3];
+        assert_eq!(fill_block(&mut out, &data, 99), 0);
+        assert_eq!(out, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn trim_drops_encoder_padding_and_never_underflows() {
+        // 1 frame of delay, 1 of padding, 2 channels, 3 frames total.
+        let mut samples = vec![9.0f32; 3 * 2];
+        trim_gapless(&mut samples, Some(1), Some(1), 2);
+        assert_eq!(samples.len(), 2, "one frame in, one frame out");
+
+        // A bogus header must empty the buffer rather than panic or wrap.
+        let mut samples = vec![1.0f32; 4];
+        trim_gapless(&mut samples, Some(u32::MAX), Some(u32::MAX), 2);
+        assert!(samples.is_empty());
     }
 
     #[test]

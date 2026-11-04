@@ -84,7 +84,9 @@ def main():
         start = time.perf_counter()
         sound_rs.play_array(samples, RATE)
         elapsed = time.perf_counter() - start
-        assert elapsed >= 0.2, f"playback returned early ({elapsed:.2f}s) — the tail was truncated"
+        # Playback must not return before the audio ends; the upper bound only
+        # catches a runaway wait (an 0.2 s clip cannot take a second).
+        assert 0.2 <= elapsed < 1.0, f"playback took {elapsed:.2f}s for a 0.2s clip"
 
         sound_rs.play_array(np.stack([samples, samples]), RATE)
         sound_rs.play_sine_wave(440.0, 0.1, RATE)

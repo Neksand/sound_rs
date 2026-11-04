@@ -12,7 +12,6 @@ so it is measured per format and checked for correctness against libsndfile.
 import argparse
 import math
 import os
-import resource
 import statistics
 import struct
 import tempfile
@@ -58,8 +57,20 @@ def bench(func, runs=RUNS):
 
 
 def peak_rss_mb():
-    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    """Process peak RSS. Not available on Windows, where the line is skipped."""
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except ImportError:
+        return None
     return usage / (1024 * 1024) if os.uname().sysname == "Darwin" else usage / 1024
+
+
+def print_peak_rss():
+    peak = peak_rss_mb()
+    if peak is not None:
+        print(f"\npeak RSS (whole run): {peak:.0f} MB")
 
 
 def pcm_check(path):
@@ -70,7 +81,10 @@ def pcm_check(path):
         reference, _ = soundfile.read(path, dtype="float32", always_2d=True)
     except Exception:
         return "n/a"
-    ours, _ = sound_rs.load(path)
+    try:
+        ours, _ = sound_rs.load(path)
+    except Exception as e:  # a decode failure must not read as "not comparable"
+        return f"DECODE FAILED ({e})"
     if ours.shape != reference.shape:
         return f"shape {ours.shape} vs {reference.shape}"
     diff = float(np.abs(ours - reference).max())
@@ -112,7 +126,7 @@ def main():
 
     if args.files:
         decode_table(args.files)
-        print(f"\npeak RSS (whole run): {peak_rss_mb():.0f} MB")
+        print_peak_rss()
         print()
         return
 
@@ -154,7 +168,8 @@ def main():
         except ImportError:
             print("  sounddevice not installed, skipped")
 
-    print(f"\npeak RSS (whole run): {peak_rss_mb():.0f} MB\n")
+    print_peak_rss()
+    print()
 
 
 if __name__ == "__main__":

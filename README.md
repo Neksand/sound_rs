@@ -12,8 +12,8 @@ macOS, Windows and Linux.
 - **Formats:** WAV, MP3, FLAC, OGG/Vorbis, M4A, AAC — any bit depth, including 24-bit
 - **NumPy arrays:** play 1D mono `(samples,)` or 2D `(channels, samples)` float32 arrays
 - **Decode to array:** `load(path) -> (ndarray, sample_rate)`, shape `(frames, channels)`
-- **Gapless:** encoder delay and padding are trimmed, so decoded length matches the original
-- **Header-only metadata:** `get_audio_info` reads the container, it does not decode the file
+- **Gapless (MP3, OGG):** encoder delay and padding are trimmed, so decoded length matches the original. AAC/MP4 priming is not reported by the container and stays in the output (~45 ms)
+- **Fast metadata:** `get_audio_info` reads the container header (one packet is decoded for AAC, which carries no channel layout)
 - **Resampling:** linear interpolation to the device rate, channel folding to the device layout
 - **Device-native output:** the stream is opened in whatever sample format the device wants (f32, i16, u16, ...)
 - **Non-blocking for others:** playback blocks the calling thread but releases the GIL, so other Python threads keep running
@@ -104,17 +104,17 @@ median and p95 of 7 runs, competitor is libsndfile (`soundfile` 0.14).
 
 | format | metadata | decode (median / p95) | libsndfile | result | PCM vs libsndfile |
 |---|---|---|---|---|---|
-| WAV (PCM 16) | 0.01 ms | **8.8 / 11.7 ms** | 11.5 ms | 1.3× faster | identical |
-| FLAC | 0.02 ms | **16.7 / 17.2 ms** | 41.4 ms | 2.5× faster | identical |
-| MP3 | 0.02 ms | 38.0 / 41.6 ms | **24.9 ms** | 1.5× slower | 1.9e-07 |
-| M4A (AAC) | 0.14 ms | 34.2 / 39.1 ms | unsupported | sound_rs only | — |
+| WAV (PCM 16) | 0.02 ms | **8.4 / 15.0 ms** | 11.3 ms | 1.3× faster | identical |
+| FLAC | 0.02 ms | **16.2 / 16.8 ms** | 41.3 ms | 2.5× faster | identical |
+| MP3 | 0.02 ms | 38.1 / 38.9 ms | **23.6 ms** | 1.6× slower | 1.9e-07 |
+| M4A (AAC) | 0.15 ms | 34.1 / 36.5 ms | unsupported | sound_rs only | — |
 
 Playback of a 3 s tone, overhead over the track duration (median of 5):
 
 | | median | p95 | overhead |
 |---|---|---|---|
-| sound_rs | 3.103 s | 3.128 s | +0.103 s |
-| sounddevice | 3.128 s | 3.137 s | +0.128 s |
+| sound_rs | 3.124 s | 3.280 s | +0.124 s |
+| sounddevice | 3.125 s | 3.131 s | +0.125 s |
 
 What the numbers say, including the unflattering parts:
 
@@ -122,8 +122,9 @@ What the numbers say, including the unflattering parts:
   as reading a 3-second one, because it comes from the container header.
 - **PCM output matches libsndfile exactly** for WAV and FLAC, and to 1.9e-07
   for MP3 — both trim the encoder delay and padding, so sample N means the
-  same thing in both libraries.
-- **MP3 decoding is ~1.5× behind libmpg123.** That is the decoder itself, not
+  same thing in both libraries. AAC/MP4 gets no such metadata from the
+  container, so `load()` keeps the decoder's priming (~45 ms).
+- **MP3 decoding is ~1.6× behind libmpg123.** That is the decoder itself, not
   the plumbing; fixing it means a different MP3 decoder.
 - **Playback overhead is stream setup and teardown**, ~0.1 s per call. Reducing
   it to single-digit milliseconds needs a persistent stream, which is the next
@@ -140,9 +141,9 @@ What the numbers say, including the unflattering parts:
 | ✅ 2 | MP3, FLAC, M4A, AAC, 24-bit | Full symphonia decode path |
 | ✅ 3 | NumPy integration | 1D/2D float32 arrays |
 | ✅ 4 | Decode to array | `load(path) -> (ndarray, sample_rate)` without playing |
-| 🔜 4 | `Player` object | Persistent stream: pause, resume, seek, volume, position |
-| 🔜 5 | Device selection | `list_devices()`, choose input/output |
-| 🔜 6 | Recording | Microphone → array or WAV |
+| 🔜 5 | `Player` object | Persistent stream: pause, resume, seek, volume, position |
+| 🔜 6 | Device selection | `list_devices()`, choose input/output |
+| 🔜 7 | Recording | Microphone → array or WAV |
 
 ---
 
