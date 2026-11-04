@@ -52,6 +52,23 @@ fn open(path: &str) -> Result<Box<dyn FormatReader>, String> {
         .map_err(|e| format!("Unsupported or corrupt audio file '{path}': {e}"))
 }
 
+/// What the container header claims, without touching the audio payload.
+struct TrackInfo {
+    sample_rate: Option<u32>,
+    channels: Option<u16>,
+    frames: Option<u64>,
+}
+
+fn probe_info(path: &str) -> Result<TrackInfo, String> {
+    let format = open(path)?;
+    let track = format.default_track().ok_or("No audio track found")?;
+    Ok(TrackInfo {
+        sample_rate: track.codec_params.sample_rate,
+        channels: track.codec_params.channels.map(|c| c.count() as u16),
+        frames: track.codec_params.n_frames,
+    })
+}
+
 fn decode(path: &str) -> Result<Audio, String> {
     let mut format = open(path)?;
 
@@ -290,10 +307,20 @@ fn is_supported_format(file_path: &str) -> bool {
     open(file_path).is_ok()
 }
 
-/// Get `(sample_rate, channels, duration_seconds)` of an audio file.
+/// Get `(sample_rate, channels, duration_seconds)` from the container header.
+///
+/// Only decodes when the header does not carry a frame count (some VBR MP3s).
 #[pyfunction]
 fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> {
-    let audio = py.allow_threads(|| decode(file_path)).map_err(to_pyerr)?;
+    py.allow_threads(|| info_or_decode(file_path)).map_err(to_pyerr)
+}
+
+fn info_or_decode(path: &str) -> Result<(u32, u16, f32), String> {
+    let info = probe_info(path)?;
+    if let (Some(rate), Some(channels), Some(frames)) = (info.sample_rate, info.channels, info.frames) {
+        return Ok((rate, channels, frames as f32 / rate as f32));
+    }
+    let audio = decode(path)?;
     Ok((audio.sample_rate, audio.channels, audio.duration()))
 }
 
@@ -363,6 +390,41 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Minimal 16-bit PCM WAV whose header claims `frames` but which carries
+    /// only `actual_frames` of audio.
+    fn write_truncated_wav(path: &std::path::Path, frames: u32, actual_frames: u32, rate: u32) {
+        let (channels, bits) = (1u16, 16u16);
+        let block = channels * bits / 8;
+        let mut buf = Vec::new();
+        buf.extend(b"RIFF");
+        buf.extend(((36 + frames * block as u32) as u32).to_le_bytes());
+        buf.extend(b"WAVEfmt ");
+        buf.extend(16u32.to_le_bytes());
+        buf.extend(1u16.to_le_bytes());
+        buf.extend(channels.to_le_bytes());
+        buf.extend(rate.to_le_bytes());
+        buf.extend((rate * block as u32).to_le_bytes());
+        buf.extend(block.to_le_bytes());
+        buf.extend(bits.to_le_bytes());
+        buf.extend(b"data");
+        buf.extend((frames * block as u32).to_le_bytes());
+        buf.extend(std::iter::repeat_n(0u8, actual_frames as usize * block as usize));
+        std::fs::write(path, buf).unwrap();
+    }
+
+    #[test]
+    fn audio_info_reads_header_without_decoding() {
+        let path = std::env::temp_dir().join(format!("sound_rs_info_{}.wav", std::process::id()));
+        write_truncated_wav(&path, 44_100 * 2, 100, 44_100);
+        let (rate, channels, duration) = info_or_decode(path.to_str().unwrap()).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!((rate, channels), (44_100, 1));
+        assert!(
+            (duration - 2.0).abs() < 0.01,
+            "duration came from the header, not the decoded tail: {duration}"
+        );
+    }
 
     #[test]
     fn resample_keeps_stereo_interleaved() {
