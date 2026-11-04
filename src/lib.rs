@@ -9,8 +9,8 @@ use cpal::{FromSample, SampleFormat, SizedSample};
 use pyo3::prelude::*;
 use std::fs::File;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
@@ -69,6 +69,19 @@ fn probe_info(path: &str) -> Result<TrackInfo, String> {
     })
 }
 
+/// Samples to reserve up front: the whole file for short clips, at most a
+/// minute for long ones so a two-hour lossless file does not reserve gigabytes
+/// before the first packet is decoded.
+fn prealloc_capacity(frames: Option<u64>, channels: Option<u16>, rate: Option<u32>) -> usize {
+    let (Some(frames), Some(channels)) = (frames, channels) else {
+        return 0;
+    };
+    let rate = rate.unwrap_or(48_000) as u64;
+    let wanted = frames.saturating_mul(channels as u64);
+    let cap = wanted.min(rate * channels as u64 * 60);
+    usize::try_from(cap).unwrap_or(0)
+}
+
 fn decode(path: &str) -> Result<Audio, String> {
     let mut format = open(path)?;
 
@@ -88,10 +101,7 @@ fn decode(path: &str) -> Result<Audio, String> {
     };
 
     // One allocation for the whole file instead of repeated Vec growth.
-    let mut samples = match (n_frames, channels) {
-        (Some(frames), Some(ch)) => Vec::with_capacity(frames as usize * ch as usize),
-        _ => Vec::new(),
-    };
+    let mut samples = Vec::with_capacity(prealloc_capacity(n_frames, channels, sample_rate));
     let mut buffer: Option<SampleBuffer<f32>> = None;
 
     loop {
@@ -202,34 +212,90 @@ fn convert_channels(samples: &[f32], src: u16, dst: u16) -> Vec<f32> {
         .collect()
 }
 
+/// Copies the next block into the output buffer, zero-padding the tail.
+/// Returns how many real samples were written. One atomic update per block,
+/// not per sample.
+fn fill_block<T>(output: &mut [T], data: &[f32], position: usize) -> usize
+where
+    T: SizedSample + FromSample<f32>,
+{
+    let n = output.len().min(data.len().saturating_sub(position));
+    for (slot, sample) in output[..n].iter_mut().zip(&data[position..position + n]) {
+        *slot = T::from_sample(*sample);
+    }
+    for slot in output[n..].iter_mut() {
+        *slot = T::from_sample(0.0f32);
+    }
+    n
+}
+
+/// How long the last real sample still needs before it reaches the DAC: the
+/// device's own latency plus the duration of the silence padding after it.
+fn drain_duration(latency: Duration, padding: usize, channels: u16, rate: u32) -> Duration {
+    let padding = Duration::from_secs_f64(padding as f64 / channels as f64 / rate as f64);
+    latency + padding
+}
+
+/// Everything the real-time callback needs, shared with the play loop.
+#[derive(Clone)]
+struct PlaybackState {
+    data: Arc<Vec<f32>>,
+    position: Arc<AtomicUsize>,
+    drain_us: Arc<AtomicU64>,
+    error: Arc<Mutex<Option<String>>>,
+    channels: u16,
+    rate: u32,
+}
+
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    data: Arc<Vec<f32>>,
-    position: Arc<AtomicUsize>,
+    state: PlaybackState,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample + FromSample<f32>,
 {
-    let total = data.len();
+    let err_slot = state.error.clone();
     device
         .build_output_stream(
             config,
-            move |output: &mut [T], _: &cpal::OutputCallbackInfo| {
-                for slot in output.iter_mut() {
-                    let i = position.fetch_add(1, Ordering::Relaxed);
-                    *slot = if i < total {
-                        T::from_sample(data[i])
-                    } else {
-                        T::from_sample(0.0f32)
-                    };
+            move |output: &mut [T], info: &cpal::OutputCallbackInfo| {
+                let position = state.position.load(Ordering::Relaxed);
+                let written = fill_block(output, &state.data, position);
+                state.position.store(position + written, Ordering::Relaxed);
+
+                if written < output.len() && state.drain_us.load(Ordering::Relaxed) == 0 {
+                    // This callback delivered the last real sample; record when
+                    // it will actually be heard so play() can wait exactly.
+                    let stamp = info.timestamp();
+                    let latency = stamp
+                        .playback
+                        .duration_since(&stamp.callback)
+                        .unwrap_or_default();
+                    let drain = drain_duration(
+                        latency,
+                        output.len() - written,
+                        state.channels,
+                        state.rate,
+                    );
+                    let _ = state.drain_us.compare_exchange(
+                        0,
+                        (drain.as_micros() as u64).max(1),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    );
                 }
             },
-            |err| eprintln!("Audio stream error: {err}"),
+            move |err| {
+                if let Ok(mut slot) = err_slot.lock() {
+                    slot.get_or_insert_with(|| err.to_string());
+                }
+            },
             None,
         )
         .map_err(|e| format!("Cannot open output stream: {e}"))
 }
+
 
 /// The single playback path: resample to the device rate, fold to the device
 /// channel count, open a stream in the device's own sample format, block until
@@ -263,24 +329,59 @@ fn play(samples: Vec<f32>, src_rate: u32, src_channels: u16) -> Result<(), Strin
 
     let data = Arc::new(ready);
     let position = Arc::new(AtomicUsize::new(0));
+    let drain_us = Arc::new(AtomicU64::new(0));
+    let error = Arc::new(Mutex::new(None));
+    let state = PlaybackState {
+        data: data.clone(),
+        position: position.clone(),
+        drain_us: drain_us.clone(),
+        error: error.clone(),
+        channels: out_channels,
+        rate: out_rate,
+    };
+
     let stream = match supported.sample_format() {
-        SampleFormat::F32 => build_stream::<f32>(&device, &config, data.clone(), position.clone()),
-        SampleFormat::F64 => build_stream::<f64>(&device, &config, data.clone(), position.clone()),
-        SampleFormat::I16 => build_stream::<i16>(&device, &config, data.clone(), position.clone()),
-        SampleFormat::I32 => build_stream::<i32>(&device, &config, data.clone(), position.clone()),
-        SampleFormat::U8 => build_stream::<u8>(&device, &config, data.clone(), position.clone()),
-        SampleFormat::U16 => build_stream::<u16>(&device, &config, data.clone(), position.clone()),
+        SampleFormat::F32 => build_stream::<f32>(&device, &config, state),
+        SampleFormat::F64 => build_stream::<f64>(&device, &config, state),
+        SampleFormat::I16 => build_stream::<i16>(&device, &config, state),
+        SampleFormat::I32 => build_stream::<i32>(&device, &config, state),
+        SampleFormat::U8 => build_stream::<u8>(&device, &config, state),
+        SampleFormat::U16 => build_stream::<u16>(&device, &config, state),
         other => return Err(format!("Unsupported output sample format: {other:?}")),
     }?;
 
     stream.play().map_err(|e| format!("Playback failed: {e}"))?;
 
+    // Wait until the callback has consumed the buffer, then for exactly as
+    // long as the last sample still needs to reach the device.
     while position.load(Ordering::Relaxed) < data.len() {
-        std::thread::sleep(Duration::from_millis(20));
+        if error.lock().map(|e| e.is_some()).unwrap_or(false) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
-    // Let the device finish playing what is already in its own buffer.
-    std::thread::sleep(Duration::from_millis(100));
-    Ok(())
+
+    // The drain timestamp is published right after the position update, so a
+    // short spin is enough. Platforms that report no timestamp leave it at 0.
+    let mut drain = drain_us.load(Ordering::Relaxed);
+    for _ in 0..50 {
+        if drain > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+        drain = drain_us.load(Ordering::Relaxed);
+    }
+    let wait = if drain > 0 {
+        Duration::from_micros(drain) + Duration::from_millis(10)
+    } else {
+        Duration::from_millis(100)
+    };
+    std::thread::sleep(wait);
+
+    match error.lock().map(|mut e| e.take()).unwrap_or(None) {
+        Some(e) => Err(format!("Audio stream error: {e}")),
+        None => Ok(()),
+    }
 }
 
 fn play_file(path: &str) -> Result<(), String> {
@@ -424,6 +525,53 @@ mod tests {
             (duration - 2.0).abs() < 0.01,
             "duration came from the header, not the decoded tail: {duration}"
         );
+    }
+
+    #[test]
+    fn prealloc_is_capped_and_overflow_safe() {
+        // 2 hours of 44.1k stereo must not reserve the whole file up front.
+        let huge = prealloc_capacity(Some(44_100 * 2 * 7200), Some(2), Some(44_100));
+        assert_eq!(huge, 44_100 * 2 * 60);
+        // A short file gets an exact reservation.
+        assert_eq!(prealloc_capacity(Some(44_100), Some(2), Some(44_100)), 44_100 * 2);
+        // Unknown metadata reserves nothing rather than guessing.
+        assert_eq!(prealloc_capacity(None, Some(2), Some(44_100)), 0);
+        // u64::MAX frames must not wrap on 64-bit or panic.
+        assert_eq!(prealloc_capacity(Some(u64::MAX), Some(2), Some(44_100)), 44_100 * 2 * 60);
+    }
+
+    #[test]
+    fn fill_block_copies_and_pads_tail() {
+        let data: Vec<f32> = vec![0.5, -0.5, 1.0];
+        let mut out = [9.0f32; 8];
+        let written = fill_block(&mut out, &data, 0);
+        assert_eq!(written, 3);
+        assert_eq!(&out[..3], &[0.5, -0.5, 1.0]);
+        assert!(out[3..].iter().all(|&s| s == 0.0), "tail must be silence, not stale data");
+    }
+
+    #[test]
+    fn fill_block_resumes_mid_buffer() {
+        let data: Vec<f32> = (0..10).map(|i| i as f32).collect();
+        let mut out = [0.0f32; 4];
+        let written = fill_block(&mut out, &data, 8);
+        assert_eq!(written, 2);
+        assert_eq!(&out[..2], &[8.0, 9.0]);
+    }
+
+    #[test]
+    fn fill_block_converts_to_device_format() {
+        let data = vec![1.0f32, -1.0f32];
+        let mut out = [0i16; 2];
+        fill_block(&mut out, &data, 0);
+        assert!(out[0] > 32_000 && out[1] < -32_000, "full scale must map to full scale: {out:?}");
+    }
+
+    #[test]
+    fn drain_covers_device_latency_and_padding() {
+        // 882 samples of padding at 2ch/44.1k = 10 ms, plus 20 ms device latency.
+        let drain = drain_duration(Duration::from_millis(20), 882, 2, 44_100);
+        assert!((drain.as_secs_f64() - 0.030).abs() < 0.001, "{drain:?}");
     }
 
     #[test]
