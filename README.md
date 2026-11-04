@@ -11,6 +11,9 @@ macOS, Windows and Linux.
 
 - **Formats:** WAV, MP3, FLAC, OGG/Vorbis, M4A, AAC — any bit depth, including 24-bit
 - **NumPy arrays:** play 1D mono `(samples,)` or 2D `(channels, samples)` float32 arrays
+- **Decode to array:** `load(path) -> (ndarray, sample_rate)`, shape `(frames, channels)`
+- **Gapless:** encoder delay and padding are trimmed, so decoded length matches the original
+- **Header-only metadata:** `get_audio_info` reads the container, it does not decode the file
 - **Resampling:** linear interpolation to the device rate, channel folding to the device layout
 - **Device-native output:** the stream is opened in whatever sample format the device wants (f32, i16, u16, ...)
 - **Non-blocking for others:** playback blocks the calling thread but releases the GIL, so other Python threads keep running
@@ -39,11 +42,19 @@ sound_rs.play_audio("sound.flac")
 sound_rs.play_audio("sound.m4a")
 ```
 
-### Inspect a file
+### Inspect a file (no decoding)
 
 ```python
 sample_rate, channels, duration = sound_rs.get_audio_info("sound.mp3")
 sound_rs.is_supported_format("sound.mp3")  # probes the header, does not decode
+```
+
+### Decode to a NumPy array
+
+```python
+import sound_rs
+
+audio, rate = sound_rs.load("music.flac")   # float32, shape (frames, channels)
 ```
 
 ### From a NumPy array
@@ -77,8 +88,9 @@ sound_rs.play_sine_wave(440.0, 1.0, 44100)  # frequency, duration, sample rate
 ## 🧩 Benchmark
 
 `play_audio` is synchronous, so its wall-clock time is dominated by the track's
-own duration. The interesting numbers are **decode throughput** and **overhead**
-(wall clock − audio duration).
+own duration. The interesting numbers are **metadata**, **decode** and
+**overhead** (wall clock − audio duration) — and decode is only worth measuring
+if the output is correct, so every run also compares PCM against libsndfile.
 
 ```bash
 python examples/benchmark.py                        # generated 3s tone: decode + playback
@@ -87,28 +99,36 @@ python examples/benchmark.py --files a.mp3 b.flac   # decode table for real file
 ```
 
 **Hardware and setup I measured on:** Apple M5 Pro, macOS 26.6.2, Python 3.14.7,
-release build (`lto = "fat"`, `opt-level = 3`), 60 s of 44.1 kHz stereo, best of 5
-runs, competitor is libsndfile (`soundfile` 0.14).
+release build (`lto = "fat"`, `opt-level = 3`), 60 s of 44.1 kHz stereo,
+median and p95 of 7 runs, competitor is libsndfile (`soundfile` 0.14).
 
-| format | size | sound_rs | soundfile | result |
-|---|---|---|---|---|
-| WAV (PCM 16) | 10.6 MB | **5.6 ms** | 7.1 ms | 1.3× faster |
-| FLAC | 0.7 MB | **10.2 ms** | 26.1 ms | 2.6× faster |
-| MP3 | 1.0 MB | 19.6 ms | **16.1 ms** | 1.2× slower |
-| M4A (AAC) | 1.0 MB | 22.1 ms | unsupported | sound_rs only |
+| format | metadata | decode (median / p95) | libsndfile | result | PCM vs libsndfile |
+|---|---|---|---|---|---|
+| WAV (PCM 16) | 0.01 ms | **8.8 / 11.7 ms** | 11.5 ms | 1.3× faster | identical |
+| FLAC | 0.02 ms | **16.7 / 17.2 ms** | 41.4 ms | 2.5× faster | identical |
+| MP3 | 0.02 ms | 38.0 / 41.6 ms | **24.9 ms** | 1.5× slower | 1.9e-07 |
+| M4A (AAC) | 0.14 ms | 34.2 / 39.1 ms | unsupported | sound_rs only | — |
 
-Playback of a 3 s tone, overhead over the track duration:
+Playback of a 3 s tone, overhead over the track duration (median of 5):
 
-| | wall clock | overhead |
-|---|---|---|
-| sound_rs | 3.240 s | +0.239 s |
-| sounddevice | 3.234 s | +0.234 s |
+| | median | p95 | overhead |
+|---|---|---|---|
+| sound_rs | 3.103 s | 3.128 s | +0.103 s |
+| sounddevice | 3.128 s | 3.137 s | +0.128 s |
 
-Both pay the same cost: opening and closing the audio stream on every call. I want
-to be straight about the weak spots too: my MP3 decoding is ~20% behind libmpg123,
-and on uncompressed WAV there is no real race to win — both sides are a memcpy.
-The playback overhead is the number I intend to fix with a persistent stream, which
-should bring it down to single-digit milliseconds.
+What the numbers say, including the unflattering parts:
+
+- **Metadata no longer decodes the file.** Reading a 2-hour file costs the same
+  as reading a 3-second one, because it comes from the container header.
+- **PCM output matches libsndfile exactly** for WAV and FLAC, and to 1.9e-07
+  for MP3 — both trim the encoder delay and padding, so sample N means the
+  same thing in both libraries.
+- **MP3 decoding is ~1.5× behind libmpg123.** That is the decoder itself, not
+  the plumbing; fixing it means a different MP3 decoder.
+- **Playback overhead is stream setup and teardown**, ~0.1 s per call. Reducing
+  it to single-digit milliseconds needs a persistent stream, which is the next
+  item on the roadmap.
+
 
 ---
 
@@ -119,10 +139,10 @@ should bring it down to single-digit milliseconds.
 | ✅ 1 | WAV playback | Core playback |
 | ✅ 2 | MP3, FLAC, M4A, AAC, 24-bit | Full symphonia decode path |
 | ✅ 3 | NumPy integration | 1D/2D float32 arrays |
+| ✅ 4 | Decode to array | `load(path) -> (ndarray, sample_rate)` without playing |
 | 🔜 4 | `Player` object | Persistent stream: pause, resume, seek, volume, position |
 | 🔜 5 | Device selection | `list_devices()`, choose input/output |
 | 🔜 6 | Recording | Microphone → array or WAV |
-| 🔜 7 | Decode to array | `load(path) -> (ndarray, sample_rate)` without playing |
 
 ---
 

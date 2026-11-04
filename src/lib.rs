@@ -57,6 +57,8 @@ struct TrackInfo {
     sample_rate: Option<u32>,
     channels: Option<u16>,
     frames: Option<u64>,
+    delay: u64,
+    padding: u64,
 }
 
 fn probe_info(path: &str) -> Result<TrackInfo, String> {
@@ -66,6 +68,8 @@ fn probe_info(path: &str) -> Result<TrackInfo, String> {
         sample_rate: track.codec_params.sample_rate,
         channels: track.codec_params.channels.map(|c| c.count() as u16),
         frames: track.codec_params.n_frames,
+        delay: track.codec_params.delay.unwrap_or(0) as u64,
+        padding: track.codec_params.padding.unwrap_or(0) as u64,
     })
 }
 
@@ -87,7 +91,7 @@ fn decode(path: &str) -> Result<Audio, String> {
 
     // Codec params are not always complete (AAC in MP4 has no channel layout
     // in the container), so fall back to the first decoded frame's spec.
-    let (mut sample_rate, mut channels, n_frames, mut decoder) = {
+    let (mut sample_rate, mut channels, n_frames, delay, padding, mut decoder) = {
         let track = format.default_track().ok_or("No audio track found")?;
         let decoder = symphonia::default::get_codecs()
             .make(&track.codec_params, &DecoderOptions::default())
@@ -96,6 +100,8 @@ fn decode(path: &str) -> Result<Audio, String> {
             track.codec_params.sample_rate,
             track.codec_params.channels.map(|c| c.count() as u16),
             track.codec_params.n_frames,
+            track.codec_params.delay,
+            track.codec_params.padding,
             decoder,
         )
     };
@@ -154,9 +160,24 @@ fn decode(path: &str) -> Result<Audio, String> {
         return Err(format!("No audio data decoded from '{path}'"));
     }
 
+    let channels = channels.ok_or("Unknown channel layout")?;
+    let ch = channels as usize;
+
+    // Encoders for lossy formats prepend and append frames that are not part of
+    // the signal (MP3 encoder delay, AAC padding). Skip them so the decoded
+    // audio lines up with the original, as libsndfile does.
+    if let Some(delay) = delay {
+        let skip = (delay as usize * ch).min(samples.len());
+        samples.drain(..skip);
+    }
+    if let Some(padding) = padding {
+        let keep = samples.len().saturating_sub(padding as usize * ch);
+        samples.truncate(keep);
+    }
+
     Ok(Audio {
         sample_rate: sample_rate.ok_or("Unknown sample rate")?,
-        channels: channels.ok_or("Unknown channel layout")?,
+        channels,
         samples,
     })
 }
@@ -416,13 +437,72 @@ fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> 
     py.allow_threads(|| info_or_decode(file_path)).map_err(to_pyerr)
 }
 
+/// Decodes one packet to learn the real sample rate and channel count when the
+/// container header does not carry them (AAC in MP4).
+fn sniff_spec(path: &str) -> Result<(u32, u16), String> {
+    let mut format = open(path)?;
+    let (mut decoder, mut channel_hint) = {
+        let track = format.default_track().ok_or("No audio track found")?;
+        let decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| format!("Unsupported codec: {e}"))?;
+        (decoder, track.codec_params.channels.map(|c| c.count() as u16))
+    };
+    let packet = format
+        .next_packet()
+        .map_err(|e| format!("Read error: {e}"))?;
+    let decoded = decoder
+        .decode(&packet)
+        .map_err(|e| format!("Decode error: {e}"))?;
+    channel_hint.get_or_insert(decoded.spec().channels.count() as u16);
+    Ok((decoded.spec().rate, channel_hint.unwrap_or(0)))
+}
+
 fn info_or_decode(path: &str) -> Result<(u32, u16, f32), String> {
     let info = probe_info(path)?;
-    if let (Some(rate), Some(channels), Some(frames)) = (info.sample_rate, info.channels, info.frames) {
+    let (mut rate, mut channels) = (info.sample_rate, info.channels);
+
+    if rate.is_none() || channels.is_none() {
+        let (sniffed_rate, sniffed_channels) = sniff_spec(path)?;
+        rate.get_or_insert(sniffed_rate);
+        channels.get_or_insert(sniffed_channels);
+    }
+
+    if let (Some(rate), Some(channels), Some(frames)) = (rate, channels, info.frames) {
+        let frames = frames.saturating_sub(info.delay + info.padding);
         return Ok((rate, channels, frames as f32 / rate as f32));
     }
+
     let audio = decode(path)?;
     Ok((audio.sample_rate, audio.channels, audio.duration()))
+}
+
+/// Decode a file to `(array, sample_rate)`, shape `(frames, channels)`, float32.
+#[pyfunction]
+fn load<'py>(py: Python<'py>, file_path: &str) -> PyResult<(Bound<'py, PyAny>, u32)> {
+    let audio = py.allow_threads(|| decode(file_path)).map_err(to_pyerr)?;
+    let sample_rate = audio.sample_rate;
+
+    #[cfg(feature = "numpy")]
+    {
+        use numpy::{PyArray1, PyArrayMethods};
+
+        let channels = audio.channels as usize;
+        let frames = audio.samples.len() / channels;
+        let flat = PyArray1::from_vec(py, audio.samples);
+        let shaped = flat
+            .reshape((frames, channels))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        return Ok((shaped.into_any(), sample_rate));
+    }
+
+    #[cfg(not(feature = "numpy"))]
+    {
+        let _ = audio;
+        Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "NumPy support not enabled. Build with the 'numpy' feature.",
+        ))
+    }
 }
 
 /// Play a NumPy array of f32: 1D mono `(samples,)` or 2D `(channels, samples)`.
@@ -483,6 +563,7 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(play_audio, &m)?)?;
     m.add_function(wrap_pyfunction!(is_supported_format, &m)?)?;
     m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;
+    m.add_function(wrap_pyfunction!(load, &m)?)?;
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;
     Ok(())

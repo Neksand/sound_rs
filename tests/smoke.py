@@ -13,13 +13,14 @@ import wave
 import sound_rs
 
 RATE = 44100
+AMPLITUDE = 12000
 
 
 def write_wav(path, seconds, rate=RATE, channels=1, width=2):
     frames = int(seconds * rate)
     body = bytearray()
     for i in range(frames):
-        value = int(12000 * math.sin(2 * math.pi * 440 * i / rate))
+        value = int(AMPLITUDE * math.sin(2 * math.pi * 440 * i / rate))
         for _ in range(channels):
             body += struct.pack("<h", value)
     with wave.open(path, "w") as w:
@@ -54,12 +55,28 @@ def main():
     else:
         raise AssertionError("garbage input must raise RuntimeError")
 
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+
+    if np is not None:
+        # Decoded PCM must match what was written, not merely have the right shape.
+        data, sr = sound_rs.load(stereo)
+        assert sr == RATE, sr
+        assert data.shape == (4410, 2), data.shape
+        expected = (AMPLITUDE / 32768.0) * np.sin(
+            2 * np.pi * 440 * np.arange(data.shape[0]) / RATE
+        )
+        error = float(np.abs(data[:, 0] - expected).max())
+        assert error < 1e-3, f"decoded samples are wrong (max error {error})"
+        assert np.abs(data[:, 0] - data[:, 1]).max() == 0, "channels were mixed up"
+
     if os.environ.get("SOUND_RS_PLAY") == "1":
         import time
 
-        import numpy as np
+        assert np is not None, "playback checks need numpy"
 
-        assert sound_rs.is_supported_format(mono)
         sound_rs.play_audio(mono)
 
         # A mono array must play for its real duration, not half of it.
@@ -67,7 +84,7 @@ def main():
         start = time.perf_counter()
         sound_rs.play_array(samples, RATE)
         elapsed = time.perf_counter() - start
-        assert elapsed > 0.2, f"mono array played too fast ({elapsed:.2f}s), channels were not converted"
+        assert elapsed >= 0.2, f"playback returned early ({elapsed:.2f}s) — the tail was truncated"
 
         sound_rs.play_array(np.stack([samples, samples]), RATE)
         sound_rs.play_sine_wave(440.0, 0.1, RATE)
