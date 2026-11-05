@@ -12,7 +12,7 @@ import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SITE = "https://neksand.github.io/sound_rs/"
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 REPO = "https://github.com/Neksand/sound_rs"
 PYPI = "https://pypi.org/project/sound-rs/"
 
