@@ -16,6 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
+**Latest release:** [0.3.0](https://github.com/Neksand/sound_rs/releases/tag/v0.3.0) — reliability,
+datasets, recording, queues. Build report: [docs/reports/0.3.0-report.md](docs/reports/0.3.0-report.md).
+
 ---
 
 ## 🚀 Features
@@ -241,10 +244,13 @@ What the numbers do not hide:
 | ✅ 1 | Playback + formats | WAV, MP3, FLAC, OGG, M4A, 24-bit |
 | ✅ 2 | NumPy integration | 1D/2D arrays, `load`, `load_many` |
 | ✅ 3 | `Player` | Persistent stream: pause, seek, volume, position |
-| ✅ 4 | Streaming decode | Constant memory, ~9 ms to first sound |
-| 🔜 5 | Device selection UI | Input devices, hot-swap on disconnect |
-| 🔜 6 | Recording | Microphone to array or WAV |
-| 🔜 7 | Effects | Basic gain/fade/mix utilities |
+| ✅ 4 | Streaming decode | Constant memory, ~11 ms to first sound |
+| ✅ 5 | Device selection | `list_devices`, `list_input_devices`, `device=` |
+| ✅ 6 | Recording | `Recorder`: microphone to float32 array |
+| ✅ 7 | Queues and live input | `enqueue`, `begin_feed`/`feed` |
+| ✅ 8 | Datasets | `load(..., sample_rate=16000, mono=True)`, parallel `load_many` |
+| 🔜 9 | Hot-swap on disconnect | Reopen automatically instead of raising `stalled` |
+| 🔜 10 | Effects | Basic gain/fade/mix utilities |
 
 ---
 
