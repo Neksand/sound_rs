@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::audio::{self, convert_channels, resample_all};
-use crate::error;
+use crate::{error, error_with};
 
 /// How much decoded audio the decoder thread may run ahead of the device.
 const RING_SECONDS: f64 = 1.0;
@@ -39,6 +39,10 @@ pub struct Core {
     pub seek_to: Option<f64>,
     /// Seconds of audio still in flight when the last sample was written.
     pub drain: Duration,
+    /// Callbacks that found the buffer empty while playing.
+    pub underruns: u64,
+    /// Last measured device latency, in milliseconds.
+    pub latency_ms: Option<f64>,
 }
 
 impl Core {
@@ -58,6 +62,8 @@ impl Core {
             error: None,
             seek_to: None,
             drain: Duration::ZERO,
+            underruns: 0,
+            latency_ms: None,
         }
     }
 
@@ -78,11 +84,8 @@ impl Core {
 
     /// Called from the audio callback. Writes exactly `output.len()` samples:
     /// real audio while there is some, silence otherwise.
-    pub fn fill<T>(
-        &mut self,
-        output: &mut [T],
-        latency: Option<Duration>,
-    ) where
+    pub fn fill<T>(&mut self, output: &mut [T], latency: Option<Duration>)
+    where
         T: SizedSample + FromSample<f32>,
     {
         let silence = |output: &mut [T]| {
@@ -122,6 +125,19 @@ impl Core {
 
         self.position += written;
         silence(&mut output[written..]);
+
+        // Starvation after audio has started is a real glitch; the very first
+        // callbacks before the decoder delivers its first packet are not.
+        if written < output.len() && self.position > 0 {
+            if self
+                .total
+                .map(|total| self.position < total)
+                .unwrap_or(true)
+            {
+                self.underruns += 1;
+            }
+            self.latency_ms = latency.map(|value| value.as_secs_f64() * 1000.0);
+        }
 
         // The source is done once everything it will ever produce was consumed.
         if let Some(total) = self.total {
@@ -323,7 +339,7 @@ fn decode_stream(
                 match seek {
                     Some(seconds) => {
                         source.seek(seconds)?;
-            skip = 0;
+                        skip = 0;
                         resampler.reset();
                         let (new_producer, new_consumer) = rtrb::RingBuffer::<f32>::new(capacity);
                         producer = new_producer;
@@ -371,10 +387,15 @@ impl Player {
     #[new]
     #[pyo3(signature = (device=None))]
     pub(crate) fn new(device: Option<String>) -> PyResult<Self> {
-        let output = Output::open(device.as_deref()).map_err(error)?;
+        let output =
+            Output::open(device.as_deref()).map_err(|message| error_with("device", message))?;
         let core = Arc::new(Mutex::new(Core::new(output.channels(), output.rate())));
-        let stream = output.build_stream(core.clone()).map_err(error)?;
-        stream.play().map_err(|e| error(format!("Playback failed: {e}")))?;
+        let stream = output
+            .build_stream(core.clone())
+            .map_err(|message| error_with("device", message))?;
+        stream
+            .play()
+            .map_err(|e| error_with("device", format!("Playback failed: {e}")))?;
         Ok(Self {
             output,
             core,
@@ -401,8 +422,7 @@ impl Player {
     }
 
     /// Stream a file. Returns immediately; audio is decoded as it plays.
-    pub(crate) fn play_file(&mut self, py: Python<'_>, path: &str) -> PyResult<()> {
-        let _ = py.allow_threads(|| ());
+    pub(crate) fn play_file(&mut self, _py: Python<'_>, path: &str) -> PyResult<()> {
         self.stop();
         let generation = self
             .generation
@@ -420,6 +440,7 @@ impl Player {
         core.finished = false;
         core.error = None;
         core.seek_to = None;
+        core.underruns = 0;
         core.playing = true;
         drop(core);
 
@@ -432,7 +453,8 @@ impl Player {
         let handle = std::thread::Builder::new()
             .name("sound_rs-decode".into())
             .spawn(move || {
-                let result = decode_stream(path, core, generation_counter, generation, rate, channels);
+                let result =
+                    decode_stream(path, core, generation_counter, generation, rate, channels);
                 if let Err(message) = &result {
                     if let Ok(mut core) = failure_slot.lock() {
                         core.error = Some(message.clone());
@@ -483,6 +505,7 @@ impl Player {
         core.finished = false;
         core.error = None;
         core.seek_to = None;
+        core.underruns = 0;
         core.playing = true;
         Ok(())
     }
@@ -557,6 +580,19 @@ impl Player {
         Ok(self.lock()?.is_playing())
     }
 
+    /// Callbacks that found the buffer empty while the source was still
+    /// running. A healthy stream keeps this at zero.
+    #[getter]
+    fn underruns(&self) -> PyResult<u64> {
+        Ok(self.lock()?.underruns)
+    }
+
+    /// Last device latency reported by the backend, in milliseconds.
+    #[getter]
+    fn latency(&self) -> PyResult<Option<f64>> {
+        Ok(self.lock()?.latency_ms)
+    }
+
     #[getter]
     fn volume(&self) -> PyResult<f32> {
         Ok(self.lock()?.volume)
@@ -583,10 +619,15 @@ impl Player {
         slf
     }
 
-    fn __exit__<'py>(&mut self, _py: Python<'py>, _ty: Bound<'py, PyAny>, _v: Bound<'py, PyAny>, _tb: Bound<'py, PyAny>) {
+    fn __exit__<'py>(
+        &mut self,
+        _py: Python<'py>,
+        _ty: Bound<'py, PyAny>,
+        _v: Bound<'py, PyAny>,
+        _tb: Bound<'py, PyAny>,
+    ) {
         self.stop();
     }
-
 }
 
 impl Drop for Player {
@@ -684,7 +725,10 @@ mod tests {
 
         let mut out = [0.0f32; 10];
         core.fill(&mut out, None);
-        assert_eq!(&out[..10], &(0..10).map(|i| i as f32).collect::<Vec<_>>()[..]);
+        assert_eq!(
+            &out[..10],
+            &(0..10).map(|i| i as f32).collect::<Vec<_>>()[..]
+        );
 
         core.playing = false; // paused
         core.fill(&mut out, None);
@@ -696,7 +740,35 @@ mod tests {
     }
 
     #[test]
-    fn paused_stream_is_silent_and_does_not_advance() {
+    fn underruns_are_counted_only_while_playing() {
+        let mut core = Core::new(1, 48_000);
+        let (producer, consumer) = rtrb::RingBuffer::<f32>::new(4);
+        drop(producer);
+        core.consumer = Some(consumer);
+
+        core.memory = Some(Arc::new(vec![0.5f32, 0.5]));
+        core.total = None;
+        core.playing = true;
+
+        let mut out = [0.0f32; 4];
+        core.fill(&mut out, Some(Duration::from_millis(12))); // two samples, then silence
+        assert_eq!(
+            core.underruns, 1,
+            "starving after audio started is an underrun"
+        );
+
+        core.memory = None;
+        core.fill(&mut out, Some(Duration::from_millis(12)));
+        assert_eq!(core.underruns, 2);
+        assert_eq!(core.latency_ms, Some(12.0));
+
+        core.playing = false;
+        core.fill(&mut out, None);
+        assert_eq!(core.underruns, 2, "paused silence is not an underrun");
+    }
+
+    #[test]
+    fn pause_freezes_the_position() {
         let mut core = Core::new(1, 48_000);
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(4);
         drop(producer);

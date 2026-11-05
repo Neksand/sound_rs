@@ -12,6 +12,7 @@ __all__ = [
     "is_supported_format",
     "list_devices",
     "load",
+    "load_bytes",
     "load_many",
     "play_array",
     "play_audio",
@@ -33,6 +34,9 @@ def get_audio_info(file_path: str) -> Tuple[int, int, float]:
 
 def load(file_path: str) -> Tuple[npt.NDArray[np.float32], int]:
     """Decode to a float32 array of shape `(frames, channels)` and its rate."""
+
+def load_bytes(data: bytes) -> Tuple[npt.NDArray[np.float32], int]:
+    """Decode audio that is already in memory."""
 
 def load_many(
     paths: Sequence[str], threads: Optional[int] = None

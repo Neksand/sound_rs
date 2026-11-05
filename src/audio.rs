@@ -81,7 +81,12 @@ fn mp4_children(data: &[u8]) -> Vec<(&[u8; 4], &[u8])> {
     let mut children = Vec::new();
     let mut offset = 0usize;
     while offset + 8 <= data.len() {
-        let size = u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+        let size = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         let kind: &[u8; 4] = data[offset + 4..offset + 8].try_into().unwrap();
         let (header, size) = match size {
             1 => {
@@ -104,7 +109,10 @@ fn mp4_children(data: &[u8]) -> Vec<(&[u8; 4], &[u8])> {
 }
 
 fn mp4_child<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
-    mp4_children(data).into_iter().find(|(k, _)| *k == kind).map(|(_, body)| body)
+    mp4_children(data)
+        .into_iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, body)| body)
 }
 
 /// AAC decoders emit priming frames before the real signal, and MP4 edit lists
@@ -158,14 +166,17 @@ fn mp4_priming(path: &str) -> Option<u64> {
         if kind != b"trak" {
             continue;
         }
-        let Some(mdia) = mp4_child(trak, b"mdia") else { continue };
-        let Some(hdlr) = mp4_child(mdia, b"hdlr") else { continue };
+        let Some(mdia) = mp4_child(trak, b"mdia") else {
+            continue;
+        };
+        let Some(hdlr) = mp4_child(mdia, b"hdlr") else {
+            continue;
+        };
         if hdlr.get(8..12) != Some(b"soun") {
             continue;
         }
-        let Some(elst) = mp4_child(trak, b"edts").and_then(|edts| mp4_child(edts, b"elst")) else {
-            return None;
-        };
+        let edts = mp4_child(trak, b"edts")?;
+        let elst = mp4_child(edts, b"elst")?;
         let version = *elst.first()?;
         let count = u32::from_be_bytes(elst.get(4..8)?.try_into().ok()?);
         if version > 1 || count == 0 {
@@ -244,7 +255,11 @@ fn decode_mp3(path: &str) -> Result<Audio, String> {
 
     let file = File::open(path).map_err(|e| format!("Cannot open '{path}': {e}"))?;
     let mut decoder = minimp3::Decoder::new(BufReader::new(file));
-    let mut samples = Vec::with_capacity(prealloc_capacity(info.frames, Some(channels), Some(sample_rate)));
+    let mut samples = Vec::with_capacity(prealloc_capacity(
+        info.frames,
+        Some(channels),
+        Some(sample_rate),
+    ));
     let mut skip = delay * ch as u64;
     let mut emitted = 0u64;
 
@@ -285,10 +300,9 @@ fn decode_mp3(path: &str) -> Result<Audio, String> {
 
 pub(crate) fn decode(path: &str) -> Result<Audio, String> {
     if is_mp3(path) {
-        match decode_mp3(path) {
-            Ok(audio) => return Ok(audio),
-            // Never fail a file symphonia could still read.
-            Err(_) => {}
+        // Never fail a file symphonia could still read.
+        if let Ok(audio) = decode_mp3(path) {
+            return Ok(audio);
         }
     }
     decode_symphonia(path)
@@ -312,7 +326,11 @@ pub(crate) fn decode_bytes(data: &[u8]) -> Result<Audio, String> {
 
 fn decode_symphonia(path: &str) -> Result<Audio, String> {
     let format = open(path)?;
-    let priming = if is_mp4(path) { mp4_priming(path) } else { None };
+    let priming = if is_mp4(path) {
+        mp4_priming(path)
+    } else {
+        None
+    };
     decode_format(format, priming, path)
 }
 
@@ -385,7 +403,7 @@ fn decode_format(
         // interleaving for us, for every sample format symphonia can produce.
         let needs_new_buffer = buffer
             .as_ref()
-            .map_or(true, |b| b.capacity() < decoded.capacity());
+            .is_none_or(|b| b.capacity() < decoded.capacity());
         if needs_new_buffer {
             buffer = Some(SampleBuffer::<f32>::new(
                 decoded.capacity() as u64,
@@ -414,7 +432,9 @@ fn decode_format(
         samples.truncate(keep);
     }
     if samples.is_empty() {
-        return Err(format!("'{label}' contains no audio after trimming encoder padding"));
+        return Err(format!(
+            "'{label}' contains no audio after trimming encoder padding"
+        ));
     }
 
     Ok(Audio {
@@ -434,15 +454,23 @@ pub(crate) fn convert_channels(samples: &[f32], src: u16, dst: u16) -> Vec<f32> 
     }
 
     if src == 2 && dst == 1 {
-        return samples.chunks_exact(2).map(|f| (f[0] + f[1]) * 0.5).collect();
+        return samples
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|f| (f[0] + f[1]) * 0.5)
+            .collect();
     }
 
-    samples
-        .chunks_exact(src)
-        .flat_map(|frame| (0..dst).map(move |c| frame[c % src]))
-        .collect()
+    let frames = samples.len() / src;
+    let mut out = Vec::with_capacity(frames * dst);
+    for frame in 0..frames {
+        for channel in 0..dst {
+            out.push(samples[frame * src + channel % src]);
+        }
+    }
+    out
 }
-
 
 /// Decodes one packet to learn the real sample rate and channel count when the
 /// container header does not carry them (AAC in MP4).
@@ -453,7 +481,10 @@ fn sniff_spec(path: &str) -> Result<(u32, u16), String> {
         let decoder = symphonia::default::get_codecs()
             .make(&track.codec_params, &DecoderOptions::default())
             .map_err(|e| format!("Unsupported codec: {e}"))?;
-        (decoder, track.codec_params.channels.map(|c| c.count() as u16))
+        (
+            decoder,
+            track.codec_params.channels.map(|c| c.count() as u16),
+        )
     };
     let packet = format
         .next_packet()
@@ -687,9 +718,7 @@ impl Stream {
         let padding = padding.unwrap_or(0);
         let _ = padding;
         // How many frames of the file are real audio, when the header knows.
-        let trim_frames = n_frames.map(|total| {
-            total.saturating_sub(delay as u64 + padding as u64)
-        });
+        let trim_frames = n_frames.map(|total| total.saturating_sub(delay as u64 + padding as u64));
 
         Ok(Self {
             format,
@@ -715,7 +744,9 @@ impl Stream {
         loop {
             let packet = match self.format.next_packet() {
                 Ok(packet) => packet,
-                Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(SymphoniaError::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
                     return Ok(None)
                 }
                 Err(SymphoniaError::ResetRequired) => return Ok(None),
@@ -730,7 +761,9 @@ impl Stream {
 
             let decoded = match self.decoder.decode(&packet) {
                 Ok(decoded) => decoded,
-                Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                Err(SymphoniaError::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
                     return Ok(None)
                 }
                 Err(e) => return Err(format!("Decode error: {e}")),
@@ -744,7 +777,7 @@ impl Stream {
             let needs_new = self
                 .buffer
                 .as_ref()
-                .map_or(true, |b| b.capacity() < decoded.capacity());
+                .is_none_or(|b| b.capacity() < decoded.capacity());
             if needs_new {
                 self.buffer = Some(SampleBuffer::<f32>::new(
                     decoded.capacity() as u64,
@@ -815,7 +848,9 @@ mod tests {
 
     #[test]
     fn resample_all_keeps_duration() {
-        let input: Vec<f32> = (0..48_000).map(|i| ((i as f32) * 0.01).sin() * 0.5).collect();
+        let input: Vec<f32> = (0..48_000)
+            .map(|i| ((i as f32) * 0.01).sin() * 0.5)
+            .collect();
         let out = resample_all(&input, 48_000, 44_100, 1);
         let expected = 44_100;
         assert!(
@@ -842,7 +877,6 @@ mod tests {
             .map(|i| (2.0 * std::f32::consts::PI * 20_000.0 * i as f32 / rate as f32).sin())
             .collect();
         let out = resample_all(&input, rate, 24_000, 1);
-        assert_eq!(out.len() % 1, 0);
         let rms = |samples: &[f32]| {
             (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt()
         };
@@ -854,7 +888,6 @@ mod tests {
         );
     }
 
-
     /// Minimal 16-bit PCM WAV whose header claims `frames` but which carries
     /// only `actual_frames` of audio.
     fn write_truncated_wav(path: &std::path::Path, frames: u32, actual_frames: u32, rate: u32) {
@@ -862,7 +895,7 @@ mod tests {
         let block = channels * bits / 8;
         let mut buf = Vec::new();
         buf.extend(b"RIFF");
-        buf.extend(((36 + frames * block as u32) as u32).to_le_bytes());
+        buf.extend((36 + frames * block as u32).to_le_bytes());
         buf.extend(b"WAVEfmt ");
         buf.extend(16u32.to_le_bytes());
         buf.extend(1u16.to_le_bytes());
@@ -873,7 +906,10 @@ mod tests {
         buf.extend(bits.to_le_bytes());
         buf.extend(b"data");
         buf.extend((frames * block as u32).to_le_bytes());
-        buf.extend(std::iter::repeat_n(0u8, actual_frames as usize * block as usize));
+        buf.extend(std::iter::repeat_n(
+            0u8,
+            actual_frames as usize * block as usize,
+        ));
         std::fs::write(path, buf).unwrap();
     }
 
@@ -905,7 +941,10 @@ mod tests {
         let mut stream = Stream::open(path.to_str().unwrap()).unwrap();
         let mut skip = 0u32;
         stream.seek(0.5).unwrap();
-        let chunk = stream.next_chunk(&mut skip).unwrap().expect("audio after seek");
+        let chunk = stream
+            .next_chunk(&mut skip)
+            .unwrap()
+            .expect("audio after seek");
         std::fs::remove_file(&path).ok();
 
         let first = chunk[0] * 32768.0 + 16384.0;
@@ -935,19 +974,18 @@ mod tests {
         let huge = prealloc_capacity(Some(44_100 * 2 * 7200), Some(2), Some(44_100));
         assert_eq!(huge, 44_100 * 2 * 60);
         // A short file gets an exact reservation.
-        assert_eq!(prealloc_capacity(Some(44_100), Some(2), Some(44_100)), 44_100 * 2);
+        assert_eq!(
+            prealloc_capacity(Some(44_100), Some(2), Some(44_100)),
+            44_100 * 2
+        );
         // Unknown metadata reserves nothing rather than guessing.
         assert_eq!(prealloc_capacity(None, Some(2), Some(44_100)), 0);
         // u64::MAX frames must not wrap on 64-bit or panic.
-        assert_eq!(prealloc_capacity(Some(u64::MAX), Some(2), Some(44_100)), 44_100 * 2 * 60);
+        assert_eq!(
+            prealloc_capacity(Some(u64::MAX), Some(2), Some(44_100)),
+            44_100 * 2 * 60
+        );
     }
-
-
-
-
-
-
-
 
     #[test]
     fn append_skipping_drops_leading_frames_across_chunks() {
@@ -1008,17 +1046,20 @@ mod tests {
         assert!(!is_mp4("/nonexistent"), "missing files are not mp4");
     }
 
-
-
-
     #[test]
     fn convert_mono_to_stereo_duplicates() {
-        assert_eq!(convert_channels(&[0.5, -0.5], 1, 2), vec![0.5, 0.5, -0.5, -0.5]);
+        assert_eq!(
+            convert_channels(&[0.5, -0.5], 1, 2),
+            vec![0.5, 0.5, -0.5, -0.5]
+        );
     }
 
     #[test]
     fn convert_stereo_to_mono_averages() {
-        assert_eq!(convert_channels(&[1.0, 0.0, -1.0, -1.0], 2, 1), vec![0.5, -1.0]);
+        assert_eq!(
+            convert_channels(&[1.0, 0.0, -1.0, -1.0], 2, 1),
+            vec![0.5, -1.0]
+        );
     }
 
     #[test]
@@ -1030,11 +1071,6 @@ mod tests {
         }
     }
 }
-
-
-
-
-
 
 #[cfg(test)]
 mod fuzz_tests {
@@ -1107,7 +1143,10 @@ mod fuzz_tests {
         }
         let total = ok + errors;
         assert!(total > 0, "no fixture was found to fuzz");
-        assert!(errors > 0, "mutation never produced an error, fuzz is not biting");
+        assert!(
+            errors > 0,
+            "mutation never produced an error, fuzz is not biting"
+        );
     }
 
     #[test]
@@ -1115,10 +1154,21 @@ mod fuzz_tests {
         for seed in 0..64u64 {
             let mut state = seed | 1;
             let length = (next(&mut state) % 2048) as usize;
-            let data: Vec<u8> = (0..length).map(|_| (next(&mut state) & 0xff) as u8).collect();
-            assert!(decode_bytes(&data).is_err(), "random bytes decoded successfully");
+            let data: Vec<u8> = (0..length)
+                .map(|_| (next(&mut state) & 0xff) as u8)
+                .collect();
+            assert!(
+                decode_bytes(&data).is_err(),
+                "random bytes decoded successfully"
+            );
         }
-        for data in [&b""[..], b"RIFF", b"fLaC", b"ID3", b"\x00".repeat(4096).as_slice()] {
+        for data in [
+            &b""[..],
+            b"RIFF",
+            b"fLaC",
+            b"ID3",
+            b"\x00".repeat(4096).as_slice(),
+        ] {
             assert!(decode_bytes(data).is_err());
         }
     }
@@ -1130,7 +1180,9 @@ mod property_tests {
     use proptest::prelude::*;
 
     fn rate_strategy() -> impl Strategy<Value = u32> {
-        prop::sample::select(vec![8_000u32, 16_000, 22_050, 32_000, 44_100, 48_000, 96_000])
+        prop::sample::select(vec![
+            8_000u32, 16_000, 22_050, 32_000, 44_100, 48_000, 96_000,
+        ])
     }
 
     proptest! {

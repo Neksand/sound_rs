@@ -8,22 +8,39 @@ mod audio;
 mod cli;
 mod player;
 
+use player::Player;
 use pyo3::create_exception;
 use pyo3::prelude::*;
-use player::Player;
 
 create_exception!(sound_rs, SoundRsError, pyo3::exceptions::PyRuntimeError);
 
-/// Every failure from this crate is a `SoundRsError` (a `RuntimeError` subclass),
+/// Every failure from this crate is a `SoundRsError` (a `RuntimeError` subclass)
+/// carrying a stable `.code` attribute. Codes are part of the public contract:
+/// `io`, `format`, `device`, `stalled`, `unsupported`.
+pub(crate) fn error_with(code: &str, message: String) -> PyErr {
+    use pyo3::types::PyAnyMethods;
+
+    let err = SoundRsError::new_err(message);
+    Python::with_gil(|py| {
+        let _ = err.value(py).setattr("code", code);
+    });
+    err
+}
+
+/// Audio failures are either a file we could not open (`io`) or a container we
+/// could not understand (`format`).
 pub(crate) fn error(message: String) -> PyErr {
-    SoundRsError::new_err(message)
+    let code = if message.starts_with("Cannot open") {
+        "io"
+    } else {
+        "format"
+    };
+    error_with(code, message)
 }
 
 /// Extracts interleaved f32 samples from a 1D mono or 2D `(channels, frames)`
 /// numpy array, and the channel count that goes with them.
-pub(crate) fn numpy_samples(
-    array: &Bound<'_, PyAny>,
-) -> PyResult<(Vec<f32>, u16)> {
+pub(crate) fn numpy_samples(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16)> {
     #[cfg(feature = "numpy")]
     {
         use numpy::{PyArray1, PyArray2, PyArrayMethods};
@@ -45,9 +62,9 @@ pub(crate) fn numpy_samples(
             return Ok((interleaved, channels as u16));
         }
 
-        return Err(pyo3::exceptions::PyTypeError::new_err(
+        Err(pyo3::exceptions::PyTypeError::new_err(
             "Input must be a 1D or 2D numpy array of float32",
-        ));
+        ))
     }
 
     #[cfg(not(feature = "numpy"))]
@@ -89,7 +106,9 @@ fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> 
 /// Decode a file to `(array, sample_rate)`, shape `(frames, channels)`, float32.
 #[pyfunction]
 fn load<'py>(py: Python<'py>, file_path: &str) -> PyResult<(Bound<'py, PyAny>, u32)> {
-    let audio = py.allow_threads(|| audio::decode(file_path)).map_err(error)?;
+    let audio = py
+        .allow_threads(|| audio::decode(file_path))
+        .map_err(error)?;
     into_array(py, audio)
 }
 
@@ -97,7 +116,8 @@ fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound<'_, PyAny>
     #[cfg(not(feature = "numpy"))]
     {
         let _ = (py, audio);
-        return Err(error(
+        return Err(error_with(
+            "unsupported",
             "NumPy support not enabled. Build with the 'numpy' feature.".to_string(),
         ));
     }
@@ -114,6 +134,18 @@ fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound<'_, PyAny>
             .map_err(|e| error(e.to_string()))?;
         Ok((shaped.into_any(), audio.sample_rate))
     }
+}
+
+/// Decode audio bytes already in memory. Returns the same shape and rate as
+/// `load`. The MP4 priming cannot be read without a path, so AAC decoded here
+/// may start a few milliseconds early.
+#[pyfunction]
+#[pyo3(signature = (data))]
+fn load_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<(Bound<'py, PyAny>, u32)> {
+    let audio = py
+        .allow_threads(|| audio::decode_bytes(data))
+        .map_err(error)?;
+    into_array(py, audio)
 }
 
 /// Decode many files in parallel. Returns `[(array, sample_rate), ...]` in the
@@ -201,6 +233,7 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(is_supported_format, &m)?)?;
     m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;
     m.add_function(wrap_pyfunction!(load, &m)?)?;
+    m.add_function(wrap_pyfunction!(load_bytes, &m)?)?;
     m.add_function(wrap_pyfunction!(load_many, &m)?)?;
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;

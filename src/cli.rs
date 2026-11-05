@@ -116,7 +116,10 @@ pub(crate) fn cli(py: Python<'_>) -> PyResult<i32> {
 fn run(py: Python<'_>, command: Command) -> i32 {
     match command {
         Command::Help => {
-            println!("{}", HELP.replace("{docs}", DOCS).replace("{source}", SOURCE));
+            println!(
+                "{}",
+                HELP.replace("{docs}", DOCS).replace("{source}", SOURCE)
+            );
             0
         }
         Command::Version => {
@@ -222,7 +225,9 @@ mod tests {
     #[test]
     fn play_parses_device_and_volume() {
         assert_eq!(
-            parse(&args(&["play", "a.flac", "--device", "Speakers", "--volume", "0.5"])),
+            parse(&args(&[
+                "play", "a.flac", "--device", "Speakers", "--volume", "0.5"
+            ])),
             Command::Play {
                 path: "a.flac".to_string(),
                 device: Some("Speakers".to_string()),

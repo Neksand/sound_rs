@@ -52,10 +52,17 @@ def main():
 
     try:
         sound_rs.get_audio_info(__file__)
-    except RuntimeError:
-        pass
+    except sound_rs.SoundRsError as error:
+        assert error.code == "format", error.code
     else:
-        raise AssertionError("garbage input must raise RuntimeError")
+        raise AssertionError("garbage input must raise SoundRsError")
+
+    try:
+        sound_rs.get_audio_info(os.path.join(tmp, "missing.wav"))
+    except sound_rs.SoundRsError as error:
+        assert error.code == "io", error.code
+    else:
+        raise AssertionError("a missing file must raise SoundRsError")
 
     try:
         import numpy as np
@@ -75,6 +82,24 @@ def main():
         assert np.abs(data[:, 0] - data[:, 1]).max() == 0, "channels were mixed up"
 
     if np is not None:
+        # Bytes decode must match the file decode exactly.
+        with open(mono, "rb") as handle:
+            raw = handle.read()
+        from_bytes, rate_bytes = sound_rs.load_bytes(raw)
+        from_file, rate_file = sound_rs.load(mono)
+        assert rate_bytes == rate_file, (rate_bytes, rate_file)
+        assert from_bytes.shape == from_file.shape, (from_bytes.shape, from_file.shape)
+        assert (from_bytes == from_file).all(), "bytes decode differs from file decode"
+        # A truncated file still yields its decodable prefix (by design); only
+        # data with no audio at all must raise.
+        for bad in (b"", b"not audio at all" * 20, raw[:44]):
+            try:
+                sound_rs.load_bytes(bad)
+            except sound_rs.SoundRsError as error:
+                assert error.code == "format", error.code
+            else:
+                raise AssertionError("bad bytes must raise SoundRsError")
+
         # Batch decode must return the same arrays in the same order.
         batch = sound_rs.load_many([mono, stereo, mono])
         assert len(batch) == 3, len(batch)
@@ -140,6 +165,26 @@ def main():
             player.play_array(np.zeros(4800, dtype=np.float32), 48000)
             player.wait()
             assert player.is_playing is False
+
+        # Soak: 100 cycles must not leak, and a healthy device must not report
+        # underruns after the first start-ups.
+        import resource
+
+        def rss_mb():
+            value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            return value / (1024 * 1024) if sys.platform == "darwin" else value / 1024
+
+        player = sound_rs.Player()
+        player.play_array(np.zeros(4800, dtype=np.float32), 48000)
+        player.wait()
+        baseline_rss = rss_mb()
+        for _ in range(100):
+            player.play_array(np.zeros(4800, dtype=np.float32), 48000)
+            player.wait()
+        grown = rss_mb() - baseline_rss
+        assert grown < 20, f"RSS grew {grown:.1f} MB over 100 cycles"
+        assert player.underruns < 5, f"{player.underruns} underruns on a 0.1 s buffer"
+        print(f"soak ok (rss +{grown:.1f} MB, underruns {player.underruns})")
 
         # A mono array must play for its real duration, not half of it.
         samples = np.sin(2 * np.pi * 440 * np.arange(int(0.2 * RATE)) / RATE).astype(np.float32)
