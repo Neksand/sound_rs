@@ -77,19 +77,22 @@ pip install sound_rs
 <h2 id="requirements">Requirements</h2>
 <ul>
   <li>Python 3.10 or newer, CPython.</li>
-  <li>Linux x86_64, Windows amd64 or macOS arm64 — the platforms below ship prebuilt wheels.</li>
+  <li>Linux x86_64 or aarch64, Windows amd64, macOS arm64 or Intel — all ship wheels.</li>
   <li>NumPy only if you use <code>play_array</code>, <code>load</code> or <code>load_many</code>.</li>
 </ul>
 
 <table>
-  <tr><th>Platform</th><th>Wheel</th><th>Python</th></tr>
-  <tr><td>Linux x86_64</td><td class="num">manylinux_2_17</td><td class="num">3.10–3.14</td></tr>
-  <tr><td>Windows amd64</td><td class="num">win_amd64</td><td class="num">3.10–3.14</td></tr>
-  <tr><td>macOS arm64</td><td class="num">macosx_11_0_arm64</td><td class="num">3.10–3.14</td></tr>
+  <tr><th>Platform</th><th>Wheel tag</th><th>Python</th></tr>
+  <tr><td>Linux x86_64</td><td class="num">cp310-abi3-manylinux_2_17_x86_64</td><td class="num">3.10+</td></tr>
+  <tr><td>Linux aarch64</td><td class="num">cp310-abi3-manylinux_2_17_aarch64</td><td class="num">3.10+</td></tr>
+  <tr><td>Windows amd64</td><td class="num">cp310-abi3-win_amd64</td><td class="num">3.10+</td></tr>
+  <tr><td>macOS arm64</td><td class="num">cp310-abi3-macosx_11_0_arm64</td><td class="num">3.10+</td></tr>
+  <tr><td>macOS Intel</td><td class="num">cp310-abi3-macosx_10_12_x86_64</td><td class="num">3.10+</td></tr>
 </table>
 
-<p>Anything else — musl, ARM Linux, Intel Macs, PyPy — falls back to the source distribution,
-which needs a Rust toolchain (<code>cargo</code>) on the machine.</p>
+<p>The wheels use the stable ABI, so one file covers every Python from 3.10 up — the same
+wheel installs on 3.10 through 3.14. Anything else (musl, PyPy, other architectures) falls
+back to the source distribution, which needs a Rust toolchain.</p>
 
 <h2 id="from-source">From source</h2>
 """ + code("""

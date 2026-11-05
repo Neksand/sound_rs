@@ -206,6 +206,10 @@ impl Recorder {
                 .lock()
                 .map_err(|_| error("Recorder state poisoned".to_string()))?;
             if capture.overflowed {
+                // Release ~230 MB before reporting, otherwise a failed take
+                // keeps the buffer alive until the next start().
+                capture.data = Vec::new();
+                capture.overflowed = false;
                 return Err(error_with(
                     "unsupported",
                     "Recording exceeded the 230 MB buffer; drain it more often".to_string(),

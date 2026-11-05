@@ -54,8 +54,9 @@ API reference, the `soundrs` command and the benchmark methodology.
 pip install sound_rs
 ```
 
-Wheels are built for Linux (x86_64), Windows (amd64) and macOS (arm64) for
-Python 3.10–3.14. Other platforms build from source.
+Wheels are built with the stable ABI (`abi3-py310`): one per platform — Linux
+x86_64 and aarch64, Windows amd64, macOS arm64 and Intel — each covering Python
+3.10 and newer. Other platforms build from source.
 
 ---
 

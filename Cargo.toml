@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 cpal = "0.15"
-pyo3 = { version = "0.25.0" }
+pyo3 = { version = "0.25.0", features = ["abi3-py310"] }
 numpy = { version = "0.25.0", optional = true }
 symphonia = { version = "0.5", features = ["mp3", "flac", "vorbis", "aac", "isomp4", "wav"] }
 rubato = "5.0.1"
