@@ -118,6 +118,12 @@ fn load<'py>(
     offset: f64,
     duration: Option<f64>,
 ) -> PyResult<(Bound<'py, PyAny>, u32)> {
+    if sample_rate == Some(0) {
+        return Err(error_with(
+            "usage",
+            "sample_rate must be positive".to_string(),
+        ));
+    }
     let options = audio::LoadOptions {
         sample_rate,
         mono,
@@ -255,7 +261,7 @@ pub(crate) fn devices() -> Result<Vec<(usize, String, bool)>, String> {
 /// List output devices as `(index, name, is_default)`.
 #[pyfunction]
 fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
-    devices().map_err(error)
+    devices().map_err(|message| error_with("device", message))
 }
 
 /// List input devices as `(index, name, is_default)`.

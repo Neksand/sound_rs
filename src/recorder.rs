@@ -129,6 +129,20 @@ impl Recorder {
         })
     }
 
+    fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __exit__<'py>(
+        &mut self,
+        py: Python<'py>,
+        _ty: Bound<'py, PyAny>,
+        _value: Bound<'py, PyAny>,
+        _traceback: Bound<'py, PyAny>,
+    ) {
+        let _ = self.stop(py);
+    }
+
     #[getter]
     fn sample_rate(&self) -> u32 {
         self.input.as_ref().map(|i| i.rate).unwrap_or(0)
@@ -177,6 +191,9 @@ impl Recorder {
     /// Stops capturing and returns `(array, sample_rate)`.
     pub(crate) fn stop<'py>(&mut self, py: Python<'py>) -> PyResult<(Bound<'py, PyAny>, u32)> {
         if let Some(stream) = self.stream.take() {
+            // Pause before dropping so no callback is in flight while the
+            // buffer is drained.
+            let _ = stream.pause();
             drop(stream);
         }
         let (samples, channels, rate) = {
@@ -214,8 +231,14 @@ impl Recorder {
         py: Python<'py>,
         seconds: f64,
     ) -> PyResult<(Bound<'py, PyAny>, u32)> {
+        if !seconds.is_finite() {
+            return Err(error_with(
+                "usage",
+                "record() needs a finite number of seconds".to_string(),
+            ));
+        }
         self.start()?;
-        let wait = Duration::from_secs_f64(seconds.max(0.0));
+        let wait = Duration::from_secs_f64(seconds.clamp(0.0, 3600.0));
         py.allow_threads(|| std::thread::sleep(wait));
         self.stop(py)
     }

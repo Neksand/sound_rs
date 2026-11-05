@@ -35,6 +35,7 @@ pub struct Core {
     pub memory: Option<Arc<Vec<f32>>>,
     pub consumer: Option<rtrb::Consumer<f32>>,
     pub error: Option<String>,
+    pub error_code: &'static str,
     /// Seek requested by Python, in seconds.
     pub seek_to: Option<f64>,
     /// Seconds of audio still in flight when the last sample was written.
@@ -64,6 +65,7 @@ impl Core {
             memory: None,
             consumer: None,
             error: None,
+            error_code: "format",
             seek_to: None,
             drain: Duration::ZERO,
             underruns: 0,
@@ -131,6 +133,15 @@ impl Core {
 
         self.position += written;
         silence(&mut output[written..]);
+        if latency.is_some() {
+            self.latency_ms = latency.map(|value| value.as_secs_f64() * 1000.0);
+        }
+
+        if self.end_of_stream && written < output.len() && self.position > 0 {
+            self.finished = true;
+            self.playing = false;
+            return;
+        }
 
         // Starvation after audio has started is a real glitch; the very first
         // callbacks before the decoder delivers its first packet are not.
@@ -145,15 +156,10 @@ impl Core {
             self.latency_ms = latency.map(|value| value.as_secs_f64() * 1000.0);
         }
 
-        if self.end_of_stream && written < output.len() && self.position > 0 {
-            self.finished = true;
-            self.playing = false;
-            return;
-        }
-
         // The source is done once everything it will ever produce was consumed.
         if let Some(total) = self.total {
             if self.position >= total {
+                self.position = total;
                 self.finished = true;
                 self.playing = false;
                 self.drain = latency.unwrap_or(Duration::from_millis(100))
@@ -343,10 +349,26 @@ fn decode_stream(
                 if generation.load(Ordering::Relaxed) != my_generation {
                     return Ok(());
                 }
-                let (next, seek) = {
+                let (next, seek, drained) = {
                     let mut guard = core.lock().map_err(|_| "Player state poisoned")?;
-                    (guard.queue.pop_front(), guard.seek_to.take())
+                    // Only hand over once the device consumed the previous
+                    // track; otherwise up to a second of it is cut off.
+                    let drained = guard.total.is_none_or(|total| guard.position >= total);
+                    let next = if drained {
+                        guard.queue.pop_front()
+                    } else {
+                        None
+                    };
+                    // Flip the state under the same lock that popped the queue:
+                    // wait() checks "not playing" and "queue empty" together,
+                    // and a gap between them lets it return mid-handover.
+                    if next.is_some() {
+                        guard.playing = true;
+                        guard.finished = false;
+                    }
+                    (next, guard.seek_to.take(), drained)
                 };
+
                 if let Some(next) = next {
                     match audio::Stream::open(&next) {
                         Ok(fresh) => {
@@ -367,6 +389,7 @@ fn decode_stream(
                             core.finished = false;
                             core.end_of_stream = false;
                             core.underruns = 0;
+                            core.playing = true;
                             pushed = 0;
                             break;
                         }
@@ -395,7 +418,12 @@ fn decode_stream(
                         pushed = 0;
                         break;
                     }
-                    None => std::thread::sleep(Duration::from_millis(5)),
+                    None => {
+                        // Nothing to do: wait for the device to drain before a
+                        // queued track can take over.
+                        std::thread::sleep(Duration::from_millis(5));
+                        let _ = drained;
+                    }
                 }
             }
             continue;
@@ -423,6 +451,7 @@ pub struct Player {
     thread: Option<std::thread::JoinHandle<Result<(), String>>>,
     feed_producer: Option<rtrb::Producer<f32>>,
     feed_rate: u32,
+    current_path: Option<String>,
 }
 
 #[pymethods]
@@ -448,6 +477,7 @@ impl Player {
             thread: None,
             feed_producer: None,
             feed_rate: 0,
+            current_path: None,
         })
     }
 
@@ -469,20 +499,25 @@ impl Player {
 
     /// Stream a file. Returns immediately; audio is decoded as it plays.
     pub(crate) fn play_file(&mut self, _py: Python<'_>, path: &str) -> PyResult<()> {
+        self.feed_producer = None;
         self.stop();
         let generation = self
             .generation
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
 
+        self.current_path = Some(path.to_string());
         let duration = crate::audio::duration_seconds(path).ok().flatten();
+        let expected = duration.map(|seconds| {
+            (seconds * self.output.rate() as f64).round() as usize * self.output.channels()
+        });
         let mut core = self.lock()?;
         core.duration = duration;
+        core.total = expected;
         core.base = 0;
         core.memory = None;
         core.consumer = None;
         core.position = 0;
-        core.total = None;
         core.finished = false;
         core.error = None;
         core.seek_to = None;
@@ -527,6 +562,7 @@ impl Player {
         src_channels: u16,
         sample_rate: u32,
     ) -> PyResult<()> {
+        self.feed_producer = None;
         self.stop();
         let channels = self.output.channels() as u16;
         let ready = if sample_rate == self.output.rate() && src_channels == channels {
@@ -623,27 +659,32 @@ impl Player {
             );
         }
 
-        let generation = self.generation.load(Ordering::Relaxed);
         let producer = match &mut self.feed_producer {
             Some(producer) => producer,
             None => {
                 return Err(error_with(
                     "usage",
-                    "Call begin_feed() before feed()".to_string(),
+                    "Call begin_feed() before feed(), and not after stop()".to_string(),
                 ))
             }
         };
-        py.allow_threads(|| {
+
+        // The consumer only advances in the audio callback, which cannot run
+        // while this call holds the GIL-free borrow, so a full buffer that
+        // never drains has to time out instead of spinning forever.
+        let result = py.allow_threads(|| -> Result<(), &'static str> {
+            let deadline = Instant::now() + Duration::from_secs(5);
             for sample in ready {
                 while producer.push(sample).is_err() {
-                    if self.generation.load(Ordering::Relaxed) != generation {
-                        return;
+                    if Instant::now() > deadline {
+                        return Err("feed() could not drain: is playback paused?");
                     }
                     std::thread::sleep(Duration::from_millis(2));
                 }
             }
+            Ok(())
         });
-        Ok(())
+        result.map_err(|message| error_with("stalled", message.to_string()))
     }
 
     /// No more samples will arrive; playback finishes when the ring drains.
@@ -674,6 +715,7 @@ impl Player {
     /// Stop and rewind to the start.
     fn stop(&mut self) {
         // Retire the decoder thread of the current track, if any.
+        self.feed_producer = None;
         self.generation.fetch_add(1, Ordering::Relaxed);
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
@@ -686,12 +728,27 @@ impl Player {
             core.memory = None;
             core.total = None;
             core.seek_to = None;
+            core.duration = None;
+            core.queue.clear();
+            core.end_of_stream = false;
         }
     }
 
     /// Jump to `seconds`. Works for both streamed files and arrays.
-    fn seek(&self, seconds: f64) -> PyResult<()> {
+    fn seek(&mut self, py: Python<'_>, seconds: f64) -> PyResult<()> {
         let seconds = seconds.max(0.0);
+        let restart = {
+            let core = self.lock()?;
+            core.memory.is_none() && (core.finished || !core.playing)
+        };
+        let path = self.current_path.clone();
+        if restart {
+            if let Some(path) = path {
+                // The decoder parks at the end of a track; restarting is the
+                // reliable way to play from a new position.
+                self.play_file(py, &path)?;
+            }
+        }
         let mut core = self.lock()?;
         let ch = core.channels;
         let rate = core.rate;
@@ -704,7 +761,10 @@ impl Player {
             core.seek_to = Some(seconds);
             core.base = target;
             core.position = target;
-            core.total = None;
+            // A seek after the track ended starts playback again.
+            if core.consumer.is_some() {
+                core.playing = true;
+            }
         }
         Ok(())
     }
@@ -753,7 +813,8 @@ impl Player {
         let core = self.core.clone();
         let drain = py.allow_threads(move || wait_loop(core));
         if let Some(message) = self.lock().map(|mut c| c.error.take()).ok().flatten() {
-            return Err(error(message));
+            let code = self.lock().map(|c| c.error_code).unwrap_or("format");
+            return Err(error_with(code, message));
         }
         std::thread::sleep(drain.unwrap_or(Duration::from_millis(20)));
         Ok(())
@@ -798,20 +859,21 @@ fn wait_loop(shared: Arc<Mutex<Core>>) -> Option<Duration> {
         let mut last = 0;
         let mut last_change = Instant::now();
         loop {
-            let (playing, finished, position, drain, error) = match shared.lock() {
+            let (playing, finished, position, drain, error, queued) = match shared.lock() {
                 Ok(core) => (
                     core.playing,
                     core.finished,
                     core.position,
                     core.drain,
                     core.error.is_some(),
+                    !core.queue.is_empty(),
                 ),
                 Err(_) => return None,
             };
             if error {
                 return Some(Duration::ZERO);
             }
-            if !playing || finished {
+            if (!playing || finished) && !queued {
                 return Some(drain);
             }
             if position != last {

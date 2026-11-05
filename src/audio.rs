@@ -352,7 +352,11 @@ fn decode_range(path: &str, offset: f64, duration: Option<f64>) -> Result<Audio,
         stream.seek(offset)?;
     }
 
-    let mut skip = 0u32;
+    let mut skip = if offset > 0.0 {
+        0
+    } else {
+        stream.delay_frames()
+    };
     let mut samples = Vec::new();
     let mut frames = 0u64;
     let mut limit: Option<u64> = None;
@@ -375,10 +379,8 @@ fn decode_range(path: &str, offset: f64, duration: Option<f64>) -> Result<Audio,
         }
     }
 
-    if samples.is_empty() {
-        return Err(format!("'{path}' has no audio in the requested range"));
-    }
-
+    // An empty window is a valid request (duration=0, or an offset at the end),
+    // not a broken file.
     Ok(Audio {
         sample_rate: stream.sample_rate,
         channels: stream.channels,
@@ -531,12 +533,14 @@ pub(crate) fn convert_channels(samples: &[f32], src: u16, dst: u16) -> Vec<f32> 
         return samples.to_vec();
     }
 
-    if src == 2 && dst == 1 {
-        return samples
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|f| (f[0] + f[1]) * 0.5)
+    if dst == 1 && src > 1 {
+        // Sum and average every channel. A surround layout would want proper
+        // downmix coefficients, but averaging beats silently keeping only the
+        // left channel.
+        let frames = samples.len() / src;
+        let scale = 1.0 / src as f32;
+        return (0..frames)
+            .map(|frame| samples[frame * src..(frame + 1) * src].iter().sum::<f32>() * scale)
             .collect();
     }
 
@@ -617,6 +621,9 @@ pub(crate) struct Resampler {
     channels: usize,
     /// Interleaved input accumulated until the resampler's fixed chunk is full.
     pending: Vec<f32>,
+    /// Frames of filter delay still to drop from the output; without this the
+    /// stream starts a few milliseconds of silence late.
+    skip_output: usize,
 }
 
 /// Chunk size for streaming resampling: 1024 frames keeps the filter sharp
@@ -637,10 +644,18 @@ impl Resampler {
             )
             .ok()
         };
+        let skip_output = inner
+            .as_ref()
+            .map(|inner| {
+                use rubato::Resampler as _;
+                inner.output_delay()
+            })
+            .unwrap_or(0);
         Self {
             inner,
             channels,
             pending: Vec::new(),
+            skip_output,
         }
     }
 
@@ -648,6 +663,7 @@ impl Resampler {
         if let Some(inner) = &mut self.inner {
             use rubato::Resampler as _;
             inner.reset();
+            self.skip_output = inner.output_delay();
         }
         self.pending.clear();
     }
@@ -709,7 +725,15 @@ impl Resampler {
                 break;
             };
             match inner.process(&adapter, None) {
-                Ok(resampled) => out.extend_from_slice(&resampled.take_data()),
+                Ok(resampled) => {
+                    let mut data = resampled.take_data();
+                    if self.skip_output > 0 {
+                        let drop = (self.skip_output * channels).min(data.len());
+                        data.drain(..drop);
+                        self.skip_output -= drop / channels.max(1);
+                    }
+                    out.extend_from_slice(&data);
+                }
                 Err(_) => break,
             }
         }
@@ -913,7 +937,9 @@ impl Stream {
             .map_err(|e| format!("Seek failed: {e}"))?;
 
         self.decoder.reset();
-        self.emitted = 0;
+        // `emitted` counts real audio frames since the start of the file, so a
+        // seek must jump it forward instead of restarting the padding budget.
+        self.emitted = target.saturating_sub(self.delay as u64);
         self.buffer = None;
         self.seek_target = Some(target);
         Ok(())
@@ -1339,5 +1365,51 @@ mod property_tests {
             prop_assert_eq!(out.len(), 1);
             prop_assert!(out[0].abs() < 1e-7, "mono fold of +x/-x was {}", out[0]);
         }
+    }
+}
+
+#[cfg(test)]
+mod seek_midstream_test {
+    use super::*;
+
+    #[test]
+    fn seek_after_eof_lands_on_target() {
+        let path = "tests/fixtures/tone.wav";
+        let Ok(mut stream) = Stream::open(path) else {
+            return;
+        };
+        let mut skip = 0u32;
+        while stream.next_chunk(&mut skip).unwrap().is_some() {}
+        stream.seek(0.1).unwrap();
+        let mut skip = 0u32;
+        let mut frames = 0usize;
+        while let Some(chunk) = stream.next_chunk(&mut skip).unwrap() {
+            frames += chunk.len() / stream.channels as usize;
+        }
+        assert!(
+            (frames as i64 - 6615).abs() <= 2,
+            "after eof+seek got {frames} frames"
+        );
+    }
+
+    #[test]
+    fn seek_after_reading_frames_lands_on_target() {
+        let path = "tests/fixtures/tone.wav";
+        let Ok(mut stream) = Stream::open(path) else {
+            return;
+        };
+        let mut skip = 0u32;
+        let _ = stream.next_chunk(&mut skip).unwrap();
+        stream.seek(0.1).unwrap();
+        let mut skip = 0u32;
+        let mut frames = 0usize;
+        while let Some(chunk) = stream.next_chunk(&mut skip).unwrap() {
+            frames += chunk.len() / stream.channels as usize;
+        }
+        // 0.25 s file, seek to 0.1 s -> ~6615 frames left.
+        assert!(
+            (frames as i64 - 6615).abs() <= 2,
+            "after seek got {frames} frames"
+        );
     }
 }

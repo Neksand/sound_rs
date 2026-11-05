@@ -25,8 +25,12 @@ API reference, the `soundrs` command and the benchmark methodology.
   first sound arrives in ~9 ms instead of after the whole decode
 - **`Player`:** one output stream stays open — `play`, `pause`, `resume`, `seek`,
   `stop`, `volume`, `position`, `duration`
-- **Decode to NumPy:** `load(path) -> (ndarray, sample_rate)`, shape `(frames, channels)`
-- **Parallel decode:** `load_many(paths)` uses every core, with the GIL released
+- **Decode to NumPy:** `load(path, sample_rate=, mono=, offset=, duration=)` — resample to
+  16 kHz mono in one call, or decode only a window
+- **Parallel decode:** `load_many(paths, sample_rate=, mono=)` uses every core, GIL released
+- **Recording:** `Recorder()` captures from the microphone to a float32 array
+- **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push
+  samples from Python with backpressure
 - **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded
   audio lines up with the original
 - **Fast metadata:** `get_audio_info` reads the container header, ~1 ms regardless of
@@ -34,7 +38,10 @@ API reference, the `soundrs` command and the benchmark methodology.
 - **Resampling:** rubato's FFT resampler with a proper anti-aliasing filter
 - **Device-native output:** the stream opens in whatever sample format the device
   wants (f32, f64, i16, i32, u8, u16)
-- **Errors:** everything raises `sound_rs.SoundRsError` (a `RuntimeError` subclass)
+- **Errors:** everything raises `sound_rs.SoundRsError` with a stable `.code`
+  (`io`, `format`, `device`, `stalled`, `unsupported`, `usage`)
+- **Tested guarantees:** no panics on corrupt input (mutation fuzzing), deterministic decode
+  (PCM hashes in CI), underrun reporting. The full list is on the docs site.
 - **No ffmpeg, no system libraries:** MP3, FLAC, OGG, AAC and WAV are decoded inside
   the wheel; `pip install sound_rs` needs nothing else
 - **Typed:** ships `sound_rs.pyi` and `py.typed`, so editors autocomplete everything
@@ -95,11 +102,39 @@ with sound_rs.Player() as player:
 sound_rs.list_devices()              # [(0, "MacBook Pro Speakers", True), ...]
 ```
 
+### Record
+
+```python
+import sound_rs
+
+with sound_rs.Recorder() as recorder:
+    audio, rate = recorder.record(5.0)     # float32, (frames, channels)
+```
+
+### Queue and live input
+
+```python
+import numpy as np
+import sound_rs
+
+with sound_rs.Player() as player:
+    player.play_file("a.flac")
+    player.enqueue("b.mp3")                # plays next, own rate and layout
+    player.wait()
+
+player = sound_rs.Player()
+player.begin_feed(48000)
+player.feed(np.zeros(4800, dtype=np.float32))   # blocks when the buffer is full
+player.end_feed()
+player.wait()
+```
+
 ### Inspect and decode
 
 ```python
 sample_rate, channels, duration = sound_rs.get_audio_info("music.mp3")  # no decode
 audio, rate = sound_rs.load("music.flac")                               # (frames, channels) float32
+audio, rate = sound_rs.load("music.flac", sample_rate=16000, mono=True) # dataset shape
 
 pairs = sound_rs.load_many(["a.flac", "b.flac", "c.flac"])              # parallel
 ```
@@ -215,11 +250,14 @@ What the numbers do not hide:
 ## 🧪 Development
 
 ```bash
-cargo test                      # resampler, channel conversion, gapless, seek
+cargo test                      # decode, gapless, seek, fuzzing, properties, player
+cargo clippy --all-targets -- -D warnings
 maturin develop --release       # build into your venv
 python tests/smoke.py           # end-to-end decode + API checks
 SOUND_RS_PLAY=1 python tests/smoke.py   # also plays (needs an audio device)
-python bench/run.py --compare   # full benchmark
+python tests/decode_regression.py  # PCM hashes; must not change
+python docs/check_api.py        # every public name is documented
+python bench/run.py --compare --report bench/REPORT.md
 python3 docs/_build.py          # rebuild the documentation site
 ```
 

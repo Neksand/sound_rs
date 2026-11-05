@@ -305,8 +305,9 @@ with sound_rs.Player() as player:
 """) + """
 <h2 id="feed">Pushing audio from Python</h2>
 <p>For synthesis or a network stream, feed samples instead of a file. <code>feed</code> blocks
-while the buffer is full, so a fast producer cannot exhaust memory; <code>stop</code> unblocks
-a waiting call within milliseconds.</p>
+while the buffer is full, so a fast producer cannot exhaust memory. If the buffer cannot drain
+for five seconds — a paused player, for example — it raises
+<code>SoundRsError</code> with <code>code="stalled"</code> instead of hanging.</p>
 """ + code("""
 import numpy as np
 import sound_rs

@@ -34,6 +34,7 @@ def write_wav(path, seconds, rate=RATE, channels=1, width=2):
 
 def main():
     tmp = tempfile.mkdtemp()
+    FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
     mono = os.path.join(tmp, "mono.wav")
     stereo = os.path.join(tmp, "stereo.wav")
     write_wav(mono, 0.1)
@@ -110,6 +111,33 @@ def main():
         folded, rate = sound_rs.load(stereo, mono=True, sample_rate=16000)
         assert (rate, folded.shape) == (16000, (1600, 1)), (rate, folded.shape)
 
+        # A window must carry the same samples as the head of a full decode,
+        # including the encoder delay trim for MP3/AAC.
+        for name in ("tone.wav", "tone.flac", "tone.m4a"):
+            path = os.path.join(FIX, name)
+            full, _ = sound_rs.load(path)
+            head, _ = sound_rs.load(path, duration=0.1)
+            n = min(len(head), len(full), 4000)
+            assert n > 1000, (name, len(head))
+            diff = float(np.abs(head[:n] - full[:n]).max())
+            assert diff < 1e-3, f"{name} window is misaligned by {diff}"
+
+        # MP3 windows go through symfonia's reader while a full load uses
+        # minimp3, so compare the length, not the samples.
+        mp3_head, _ = sound_rs.load(os.path.join(FIX, "tone.mp3"), duration=0.1)
+        assert abs(len(mp3_head) - 4410) <= 1, len(mp3_head)
+
+        # Zero-length windows are empty arrays, not errors.
+        empty, _ = sound_rs.load(stereo, duration=0.0)
+        assert empty.shape == (0, 2), empty.shape
+
+        # mono folds every channel: 6ch mean equals the mono decode.
+        six = os.path.join(FIX, "six.wav")
+        folded, _ = sound_rs.load(six, mono=True)
+        full, _ = sound_rs.load(six)
+        assert folded.shape[1] == 1
+        assert np.abs(folded[:, 0] - full.mean(axis=1)).max() < 1e-6
+
         # Batch decode must return the same arrays in the same order.
         batch = sound_rs.load_many([mono, stereo, mono])
         assert len(batch) == 3, len(batch)
@@ -181,13 +209,22 @@ def main():
             player.wait()
             assert player.is_playing is False
 
-        # Queue: a second track starts on its own.
+        # Queue: the handover must not cut the tail off the first track.
         player = sound_rs.Player()
-        player.play_file(mono)
-        player.enqueue(stereo)
-        assert player.queue == [stereo], player.queue
+        player.play_file(stereo)
+        player.enqueue(mono)
+        started = time.perf_counter()
         player.wait()
+        elapsed = time.perf_counter() - started
         assert player.queue == [], player.queue
+        assert elapsed > 0.18, f"queue handover cut the first track: {elapsed:.3f}s"
+
+        # Enqueuing after the current track already finished still plays it.
+        player.play_file(mono)
+        player.wait()
+        player.enqueue(stereo)
+        player.wait()
+        assert player.position > 0.05, player.position
 
         # Fed stream: five 0.1 s blocks then end_feed.
         player.begin_feed(RATE)
@@ -196,6 +233,17 @@ def main():
             player.feed(block)
         player.end_feed()
         player.wait()
+        assert player.underruns == 0, f"a healthy fed stream reported {player.underruns} underruns"
+
+        # Feeding after stop must fail fast instead of hanging.
+        player.begin_feed(RATE)
+        player.stop()
+        try:
+            player.feed(np.zeros(48000 * 2, dtype=np.float32))  # 2 s, ring is 1 s
+        except sound_rs.SoundRsError as error:
+            assert error.code == "usage", error.code
+        else:
+            raise AssertionError("feed() after stop() must raise")
 
         # Soak: 100 cycles must not leak, and a healthy device must not report
         # underruns after the first start-ups.
