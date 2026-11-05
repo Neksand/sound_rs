@@ -753,9 +753,9 @@ impl Stream {
         }
     }
 
-    /// Seeks and returns how many frames must still be dropped: container
-    /// seeking is packet-granular, so it lands before the requested frame.
-    pub fn seek(&mut self, seconds: f64) -> Result<u32, String> {
+    /// Seeks. Containers seek to a packet boundary rather than a frame, so the
+    /// caller is told how many frames to drop via `skip` on the next packet.
+    pub fn seek(&mut self, seconds: f64) -> Result<(), String> {
         let rate = self.sample_rate.max(1) as f64;
         let requested = (seconds.max(0.0) * rate).round() as u64 + self.delay as u64;
         let limit = self
@@ -765,8 +765,7 @@ impl Stream {
         let target = requested.min(limit.saturating_sub(1));
 
         let track_id = self.format.default_track().map(|t| t.id).unwrap_or(0);
-        let seeked = self
-            .format
+        self.format
             .seek(
                 symphonia::core::formats::SeekMode::Accurate,
                 SeekTo::TimeStamp {
@@ -780,8 +779,7 @@ impl Stream {
         self.emitted = 0;
         self.buffer = None;
         self.seek_target = Some(target);
-        let _ = seeked;
-        Ok(0)
+        Ok(())
     }
 }
 
@@ -880,7 +878,7 @@ mod tests {
 
         let mut stream = Stream::open(path.to_str().unwrap()).unwrap();
         let mut skip = 0u32;
-        skip += stream.seek(0.5).unwrap();
+        stream.seek(0.5).unwrap();
         let chunk = stream.next_chunk(&mut skip).unwrap().expect("audio after seek");
         std::fs::remove_file(&path).ok();
 

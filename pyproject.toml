@@ -4,18 +4,36 @@ build-backend = "maturin"
 
 [project]
 name = "sound_rs"
-description = "Fast Rust-powered audio playback library for Python"
-requires-python = ">=3.8"
+description = "Fast Rust audio for Python: play and stream MP3, FLAC, WAV, OGG and M4A without ffmpeg"
+requires-python = ">=3.10"
+keywords = [
+    "audio", "playback", "player", "streaming", "mp3", "flac", "wav", "aac",
+    "m4a", "ogg", "numpy", "resampling", "rust", "pyo3", "sound", "dsp",
+]
 license = { text = "MIT" }
 readme = "README.md"
 classifiers = [
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Topic :: Multimedia :: Sound/Audio",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Players",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dynamic = ["version"]
-urls = { "Homepage" = "https://github.com/Neksand/sound_rs", "Repository" = "https://github.com/Neksand/sound_rs", "Issues" = "https://github.com/Neksand/sound_rs/issues" }
+urls = { "Homepage" = "https://pypi.org/project/sound-rs/", "Repository" = "https://github.com/Neksand/sound_rs", "Issues" = "https://github.com/Neksand/sound_rs/issues", "Changelog" = "https://github.com/Neksand/sound_rs/releases", "Source" = "https://github.com/Neksand/sound_rs" }
 
 [project.optional-dependencies]
 numpy = ["numpy>=1.20"]

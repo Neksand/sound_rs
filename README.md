@@ -1,5 +1,12 @@
 # 🎵 sound_rs
 
+[![PyPI](https://img.shields.io/pypi/v/sound_rs)](https://pypi.org/project/sound-rs/)
+[![Downloads](https://img.shields.io/pypi/dm/sound_rs)](https://pypi.org/project/sound-rs/)
+[![Python](https://img.shields.io/pypi/pyversions/sound_rs)](https://pypi.org/project/sound-rs/)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS-blue)](#installation)
+[![Typed](https://img.shields.io/badge/typing-typed-blue)](sound_rs.pyi)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **sound_rs** is a fast, Rust-powered audio library for Python that I built and
 maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia) (plus
 minimp3 for MP3), resampling with [rubato](https://github.com/HEnquist/rubato),
@@ -24,6 +31,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 - **Device-native output:** the stream opens in whatever sample format the device
   wants (f32, f64, i16, i32, u8, u16)
 - **Errors:** everything raises `sound_rs.SoundRsError` (a `RuntimeError` subclass)
+- **No ffmpeg, no system libraries:** MP3, FLAC, OGG, AAC and WAV are decoded inside
+  the wheel; `pip install sound_rs` needs nothing else
+- **Typed:** ships `sound_rs.pyi` and `py.typed`, so editors autocomplete everything
 
 ---
 

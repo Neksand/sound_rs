@@ -21,9 +21,7 @@ pub(crate) fn error(message: String) -> PyErr {
 /// Extracts interleaved f32 samples from a 1D mono or 2D `(channels, frames)`
 /// numpy array, and the channel count that goes with them.
 pub(crate) fn numpy_samples(
-    _py: Python<'_>,
     array: &Bound<'_, PyAny>,
-    _sample_rate: u32,
 ) -> PyResult<(Vec<f32>, u16)> {
     #[cfg(feature = "numpy")]
     {
@@ -53,6 +51,7 @@ pub(crate) fn numpy_samples(
 
     #[cfg(not(feature = "numpy"))]
     {
+        let _ = array;
         Err(error(
             "NumPy support not enabled. Build with the 'numpy' feature.".to_string(),
         ))
@@ -150,7 +149,8 @@ fn load_many<'py>(
 #[pyfunction]
 fn play_array(py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
     let mut player = Player::new(None)?;
-    player.play_array(py, array, sample_rate)?;
+    let _ = py;
+    player.play_array(array, sample_rate)?;
     player.wait(py)
 }
 
@@ -190,6 +190,7 @@ fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
 fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Player>()?;
     m.add("SoundRsError", _py.get_type::<SoundRsError>())?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(play_audio, &m)?)?;
     m.add_function(wrap_pyfunction!(is_supported_format, &m)?)?;
     m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;

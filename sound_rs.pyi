@@ -3,6 +3,8 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 import numpy.typing as npt
 
+__version__: str
+
 __all__ = [
     "Player",
     "SoundRsError",
@@ -14,6 +16,7 @@ __all__ = [
     "play_array",
     "play_audio",
     "play_sine_wave",
+    "__version__",
 ]
 
 class SoundRsError(RuntimeError): ...

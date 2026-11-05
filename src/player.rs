@@ -273,7 +273,8 @@ fn decode_stream(
             core.seek_to.take()
         };
         if let Some(seconds) = seek {
-            skip = source.seek(seconds)?;
+            source.seek(seconds)?;
+            skip = 0;
             resampler.reset();
             let (new_producer, new_consumer) = rtrb::RingBuffer::<f32>::new(capacity);
             producer = new_producer;
@@ -321,7 +322,8 @@ fn decode_stream(
                     .take();
                 match seek {
                     Some(seconds) => {
-                        skip = source.seek(seconds)?;
+                        source.seek(seconds)?;
+            skip = 0;
                         resampler.reset();
                         let (new_producer, new_consumer) = rtrb::RingBuffer::<f32>::new(capacity);
                         producer = new_producer;
@@ -445,8 +447,8 @@ impl Player {
     }
 
     /// Play an in-memory array at the device format. Needs `numpy`.
-    pub(crate) fn play_array(&mut self, py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
-        let (samples, channels) = crate::numpy_samples(py, &array, sample_rate)?;
+    pub(crate) fn play_array(&mut self, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
+        let (samples, channels) = crate::numpy_samples(&array)?;
         self.play_samples(samples, channels, sample_rate)
     }
 
