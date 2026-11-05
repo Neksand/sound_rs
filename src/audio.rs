@@ -294,9 +294,35 @@ pub(crate) fn decode(path: &str) -> Result<Audio, String> {
     decode_symphonia(path)
 }
 
-fn decode_symphonia(path: &str) -> Result<Audio, String> {
-    let mut format = open(path)?;
+/// Decodes bytes that are already in memory. Used by `load_bytes` and by the
+/// decoder fuzz test, which cannot afford a temp file per case.
+pub(crate) fn decode_bytes(data: &[u8]) -> Result<Audio, String> {
+    let reader = Box::new(std::io::Cursor::new(data.to_vec()));
+    let mss = MediaSourceStream::new(reader, Default::default());
+    let probed = symphonia::default::get_probe()
+        .format(
+            &Hint::new(),
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| format!("Unsupported or corrupt audio data: {e}"))?;
+    decode_format(probed.format, None, "audio data")
+}
 
+fn decode_symphonia(path: &str) -> Result<Audio, String> {
+    let format = open(path)?;
+    let priming = if is_mp4(path) { mp4_priming(path) } else { None };
+    decode_format(format, priming, path)
+}
+
+/// Shared decode loop: a probed container, an optional MP4 priming value, and a
+/// label for error messages.
+fn decode_format(
+    mut format: Box<dyn FormatReader>,
+    priming: Option<u64>,
+    label: &str,
+) -> Result<Audio, String> {
     // Codec params are not always complete (AAC in MP4 has no channel layout
     // in the container), so fall back to the first decoded frame's spec.
     let (mut sample_rate, mut channels, n_frames, mut delay, padding, mut decoder) = {
@@ -316,7 +342,7 @@ fn decode_symphonia(path: &str) -> Result<Audio, String> {
 
     // One allocation for the whole file instead of repeated Vec growth.
     // MP3/OGG declare the delay; AAC in MP4 only records it in the edit list.
-    delay = priming_frames(path, delay);
+    delay = delay.or_else(|| priming.map(|frames| frames.min(u32::MAX as u64) as u32));
 
     let mut samples = Vec::with_capacity(prealloc_capacity(n_frames, channels, sample_rate));
     let mut buffer: Option<SampleBuffer<f32>> = None;
@@ -374,7 +400,7 @@ fn decode_symphonia(path: &str) -> Result<Audio, String> {
     }
 
     if samples.is_empty() {
-        return Err(format!("No audio data decoded from '{path}'"));
+        return Err(format!("No audio data decoded from '{label}'"));
     }
 
     let channels = channels.ok_or("Unknown channel layout")?;
@@ -388,7 +414,7 @@ fn decode_symphonia(path: &str) -> Result<Audio, String> {
         samples.truncate(keep);
     }
     if samples.is_empty() {
-        return Err(format!("'{path}' contains no audio after trimming encoder padding"));
+        return Err(format!("'{label}' contains no audio after trimming encoder padding"));
     }
 
     Ok(Audio {
@@ -1009,3 +1035,179 @@ mod tests {
 
 
 
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+
+    /// Deterministic xorshift so a failing case is reproducible from the seed.
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn mutate(input: &[u8], seed: u64) -> Vec<u8> {
+        let mut state = seed | 1;
+        let mut data = input.to_vec();
+        if data.is_empty() {
+            return data;
+        }
+        let flips = 1 + (next(&mut state) % 8) as usize;
+        for _ in 0..flips {
+            let index = (next(&mut state) as usize) % data.len();
+            data[index] ^= (next(&mut state) & 0xff) as u8;
+        }
+        match next(&mut state) % 4 {
+            0 => data.truncate(data.len() / 2),
+            1 => data.truncate((next(&mut state) as usize) % data.len() + 1),
+            2 => {
+                let extra = (next(&mut state) % 512) as usize;
+                data.extend(std::iter::repeat_n(0u8, extra));
+            }
+            _ => {}
+        }
+        data
+    }
+
+    /// A corrupt file must produce an error value, never a panic. Panics in a
+    /// test are failures, which is exactly the signal we want.
+    #[test]
+    fn mutated_fixtures_do_not_panic() {
+        let fixtures = [
+            "tests/fixtures/tone.wav",
+            "tests/fixtures/tone.flac",
+            "tests/fixtures/tone.mp3",
+            "tests/fixtures/tone.m4a",
+            "tests/fixtures/six.wav",
+        ];
+        let mut errors = 0;
+        let mut ok = 0;
+        for path in fixtures {
+            let Ok(bytes) = std::fs::read(path) else {
+                continue; // fixtures missing outside a full checkout
+            };
+            for seed in 1..200u64 {
+                match decode_bytes(&mutate(&bytes, seed)) {
+                    Ok(audio) => {
+                        ok += 1;
+                        assert!(audio.channels > 0, "{path} seed {seed}: zero channels");
+                        assert!(
+                            audio.samples.iter().all(|s| s.is_finite()),
+                            "{path} seed {seed}: non-finite sample"
+                        );
+                    }
+                    Err(message) => {
+                        errors += 1;
+                        assert!(!message.is_empty());
+                    }
+                }
+            }
+        }
+        let total = ok + errors;
+        assert!(total > 0, "no fixture was found to fuzz");
+        assert!(errors > 0, "mutation never produced an error, fuzz is not biting");
+    }
+
+    #[test]
+    fn garbage_does_not_panic() {
+        for seed in 0..64u64 {
+            let mut state = seed | 1;
+            let length = (next(&mut state) % 2048) as usize;
+            let data: Vec<u8> = (0..length).map(|_| (next(&mut state) & 0xff) as u8).collect();
+            assert!(decode_bytes(&data).is_err(), "random bytes decoded successfully");
+        }
+        for data in [&b""[..], b"RIFF", b"fLaC", b"ID3", b"\x00".repeat(4096).as_slice()] {
+            assert!(decode_bytes(data).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn rate_strategy() -> impl Strategy<Value = u32> {
+        prop::sample::select(vec![8_000u32, 16_000, 22_050, 32_000, 44_100, 48_000, 96_000])
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn resample_length_is_proportional(
+            frames in 1usize..5_000,
+            channels in 1usize..=2,
+            src in rate_strategy(),
+            dst in rate_strategy(),
+        ) {
+            let input = vec![0.0f32; frames * channels];
+            let out = resample_all(&input, src, dst, channels);
+            let expected = frames as f64 * dst as f64 / src as f64;
+            let actual = (out.len() / channels) as f64;
+            prop_assert!(
+                (actual - expected).abs() <= 1.0,
+                "{} frames at {} Hz -> {} frames at {} Hz, expected ~{}",
+                frames, src, actual, dst, expected
+            );
+        }
+
+        #[test]
+        fn resample_keeps_dc_and_stays_finite(
+            frames in 1usize..2_000,
+            channels in 1usize..=2,
+            src in rate_strategy(),
+            dst in rate_strategy(),
+            level in -1.0f32..1.0,
+        ) {
+            let input = vec![level; frames * channels];
+            let out = resample_all(&input, src, dst, channels);
+            prop_assert!(out.iter().all(|s| s.is_finite()));
+
+            // A band-limited resampler rings at a hard edge (an abrupt DC step),
+            // so the edge samples are allowed to overshoot; the bound only
+            // catches runaway gain. Steady state must reproduce the level.
+            let peak = out.iter().fold(0.0f32, |acc, s| acc.max(s.abs()));
+            prop_assert!(
+                peak <= level.abs() * 1.6 + 0.05,
+                "runaway gain {} for level {}",
+                peak,
+                level
+            );
+
+            let edge = (64 * channels).min(out.len() / 2);
+            let steady = &out[edge..out.len() - edge];
+            if steady.len() > 8 {
+                let mean = steady.iter().sum::<f32>() / steady.len() as f32;
+                prop_assert!(
+                    (mean - level).abs() < 0.01,
+                    "steady-state DC shifted: {} vs {}",
+                    mean,
+                    level
+                );
+            }
+        }
+
+        #[test]
+        fn channel_conversion_keeps_frame_count(
+            frames in 1usize..2_000,
+            src in 1u16..=6,
+            dst in 1u16..=6,
+        ) {
+            let input = vec![0.25f32; frames * src as usize];
+            let out = convert_channels(&input, src, dst);
+            prop_assert_eq!(out.len(), frames * dst as usize);
+            prop_assert!(out.iter().all(|s| s.is_finite()));
+        }
+
+        #[test]
+        fn mono_fold_cancels_opposite_channels(gain in 0.0f32..1.0) {
+            let input = vec![gain, -gain];
+            let out = convert_channels(&input, 2, 1);
+            prop_assert_eq!(out.len(), 1);
+            prop_assert!(out[0].abs() < 1e-7, "mono fold of +x/-x was {}", out[0]);
+        }
+    }
+}
