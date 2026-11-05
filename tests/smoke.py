@@ -118,6 +118,11 @@ def main():
 
         devices = sound_rs.list_devices()
         assert isinstance(devices, list), devices
+        assert isinstance(sound_rs.list_input_devices(), list)
+        if sound_rs.list_input_devices():
+            recorder = sound_rs.Recorder()
+            assert recorder.sample_rate > 0 and recorder.channels > 0
+            del recorder
         for index, name, is_default in devices:
             assert isinstance(index, int) and isinstance(name, str) and isinstance(is_default, bool)
 
@@ -175,6 +180,22 @@ def main():
             player.play_array(np.zeros(4800, dtype=np.float32), 48000)
             player.wait()
             assert player.is_playing is False
+
+        # Queue: a second track starts on its own.
+        player = sound_rs.Player()
+        player.play_file(mono)
+        player.enqueue(stereo)
+        assert player.queue == [stereo], player.queue
+        player.wait()
+        assert player.queue == [], player.queue
+
+        # Fed stream: five 0.1 s blocks then end_feed.
+        player.begin_feed(RATE)
+        block = np.zeros(4410, dtype=np.float32)
+        for _ in range(5):
+            player.feed(block)
+        player.end_feed()
+        player.wait()
 
         # Soak: 100 cycles must not leak, and a healthy device must not report
         # underruns after the first start-ups.

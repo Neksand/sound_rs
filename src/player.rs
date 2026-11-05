@@ -43,6 +43,10 @@ pub struct Core {
     pub underruns: u64,
     /// Last measured device latency, in milliseconds.
     pub latency_ms: Option<f64>,
+    /// Paths waiting to play after the current one.
+    pub queue: std::collections::VecDeque<String>,
+    /// Set when a fed stream has been closed by the caller.
+    pub end_of_stream: bool,
 }
 
 impl Core {
@@ -64,6 +68,8 @@ impl Core {
             drain: Duration::ZERO,
             underruns: 0,
             latency_ms: None,
+            queue: std::collections::VecDeque::new(),
+            end_of_stream: false,
         }
     }
 
@@ -137,6 +143,12 @@ impl Core {
                 self.underruns += 1;
             }
             self.latency_ms = latency.map(|value| value.as_secs_f64() * 1000.0);
+        }
+
+        if self.end_of_stream && written < output.len() && self.position > 0 {
+            self.finished = true;
+            self.playing = false;
+            return;
         }
 
         // The source is done once everything it will ever produce was consumed.
@@ -331,11 +343,41 @@ fn decode_stream(
                 if generation.load(Ordering::Relaxed) != my_generation {
                     return Ok(());
                 }
-                let seek = core
-                    .lock()
-                    .map_err(|_| "Player state poisoned")?
-                    .seek_to
-                    .take();
+                let (next, seek) = {
+                    let mut guard = core.lock().map_err(|_| "Player state poisoned")?;
+                    (guard.queue.pop_front(), guard.seek_to.take())
+                };
+                if let Some(next) = next {
+                    match audio::Stream::open(&next) {
+                        Ok(fresh) => {
+                            source = fresh;
+                            resampler =
+                                audio::Resampler::new(source.sample_rate, rate, channels as usize);
+                            skip = source.delay_frames();
+                            let (new_producer, new_consumer) =
+                                rtrb::RingBuffer::<f32>::new(capacity);
+                            producer = new_producer;
+                            let duration = audio::duration_seconds(&next).ok().flatten();
+                            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
+                            core.consumer = Some(new_consumer);
+                            core.duration = duration;
+                            core.position = 0;
+                            core.base = 0;
+                            core.total = None;
+                            core.finished = false;
+                            core.end_of_stream = false;
+                            core.underruns = 0;
+                            pushed = 0;
+                            break;
+                        }
+                        Err(message) => {
+                            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
+                            core.error = Some(message);
+                            core.playing = false;
+                            return Ok(());
+                        }
+                    }
+                }
                 match seek {
                     Some(seconds) => {
                         source.seek(seconds)?;
@@ -379,6 +421,8 @@ pub struct Player {
     stream: Option<cpal::Stream>,
     generation: Arc<AtomicU64>,
     thread: Option<std::thread::JoinHandle<Result<(), String>>>,
+    feed_producer: Option<rtrb::Producer<f32>>,
+    feed_rate: u32,
 }
 
 #[pymethods]
@@ -402,6 +446,8 @@ impl Player {
             stream: Some(stream),
             generation: Arc::new(AtomicU64::new(0)),
             thread: None,
+            feed_producer: None,
+            feed_rate: 0,
         })
     }
 
@@ -441,6 +487,7 @@ impl Player {
         core.error = None;
         core.seek_to = None;
         core.underruns = 0;
+        core.end_of_stream = false;
         core.playing = true;
         drop(core);
 
@@ -506,7 +553,104 @@ impl Player {
         core.error = None;
         core.seek_to = None;
         core.underruns = 0;
+        core.end_of_stream = false;
         core.playing = true;
+        Ok(())
+    }
+
+    /// Append a path to the queue. When the current track ends, the next one
+    /// starts automatically, with its own rate and channel layout.
+    fn enqueue(&mut self, path: &str) -> PyResult<()> {
+        let mut core = self.lock()?;
+        if core.queue.len() >= 128 {
+            return Err(error_with(
+                "usage",
+                "Queue is full (128 entries); wait for playback to advance".to_string(),
+            ));
+        }
+        core.queue.push_back(path.to_string());
+        Ok(())
+    }
+
+    /// Paths waiting behind the current track.
+    #[getter]
+    fn queue(&self) -> PyResult<Vec<String>> {
+        Ok(self.lock()?.queue.iter().cloned().collect())
+    }
+
+    fn clear_queue(&self) -> PyResult<()> {
+        self.lock()?.queue.clear();
+        Ok(())
+    }
+
+    /// Start a fed stream: samples arrive through `feed()` instead of a file.
+    fn begin_feed(&mut self, sample_rate: u32) -> PyResult<()> {
+        self.stop();
+        let channels = self.output.channels() as u16;
+        let capacity = (self.output.rate() as f64 * RING_SECONDS) as usize * channels as usize;
+        let (producer, consumer) = rtrb::RingBuffer::<f32>::new(capacity);
+        {
+            let mut core = self.lock()?;
+            core.memory = None;
+            core.consumer = Some(consumer);
+            core.position = 0;
+            core.base = 0;
+            core.total = None;
+            core.duration = None;
+            core.finished = false;
+            core.error = None;
+            core.underruns = 0;
+            core.end_of_stream = false;
+            core.playing = true;
+        }
+        self.feed_producer = Some(producer);
+        self.feed_rate = sample_rate.max(1);
+        Ok(())
+    }
+
+    /// Push samples into a fed stream. Blocks while the ring is full.
+    /// Expects float32 in `(frames,)` or `(channels, frames)`.
+    pub(crate) fn feed(&mut self, py: Python<'_>, array: Bound<'_, PyAny>) -> PyResult<()> {
+        let (samples, channels) = crate::numpy_samples(&array)?;
+        let device_channels = self.output.channels() as u16;
+        let mut ready = convert_channels(&samples, channels, device_channels);
+        if self.feed_rate != self.output.rate() {
+            ready = resample_all(
+                &ready,
+                self.feed_rate,
+                self.output.rate(),
+                device_channels as usize,
+            );
+        }
+
+        let generation = self.generation.load(Ordering::Relaxed);
+        let producer = match &mut self.feed_producer {
+            Some(producer) => producer,
+            None => {
+                return Err(error_with(
+                    "usage",
+                    "Call begin_feed() before feed()".to_string(),
+                ))
+            }
+        };
+        py.allow_threads(|| {
+            for sample in ready {
+                while producer.push(sample).is_err() {
+                    if self.generation.load(Ordering::Relaxed) != generation {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// No more samples will arrive; playback finishes when the ring drains.
+    fn end_feed(&mut self) -> PyResult<()> {
+        self.feed_producer = None;
+        let mut core = self.lock()?;
+        core.end_of_stream = true;
         Ok(())
     }
 

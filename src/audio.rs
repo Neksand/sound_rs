@@ -333,8 +333,12 @@ pub(crate) fn decode_with_options(path: &str, options: LoadOptions) -> Result<Au
 
     if let Some(rate) = options.sample_rate {
         if rate != audio.sample_rate {
-            audio.samples =
-                resample_all(&audio.samples, audio.sample_rate, rate, audio.channels as usize);
+            audio.samples = resample_all(
+                &audio.samples,
+                audio.sample_rate,
+                rate,
+                audio.channels as usize,
+            );
             audio.sample_rate = rate;
         }
     }
@@ -342,11 +346,7 @@ pub(crate) fn decode_with_options(path: &str, options: LoadOptions) -> Result<Au
     Ok(audio)
 }
 
-fn decode_range(
-    path: &str,
-    offset: f64,
-    duration: Option<f64>,
-) -> Result<Audio, String> {
+fn decode_range(path: &str, offset: f64, duration: Option<f64>) -> Result<Audio, String> {
     let mut stream = Stream::open(path)?;
     if offset > 0.0 {
         stream.seek(offset)?;

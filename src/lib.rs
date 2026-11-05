@@ -7,6 +7,7 @@
 mod audio;
 mod cli;
 mod player;
+mod recorder;
 
 use player::Player;
 use pyo3::create_exception;
@@ -129,7 +130,7 @@ fn load<'py>(
     into_array(py, audio)
 }
 
-fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound<'_, PyAny>, u32)> {
+pub(crate) fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound<'_, PyAny>, u32)> {
     #[cfg(not(feature = "numpy"))]
     {
         let _ = (py, audio);
@@ -257,9 +258,16 @@ fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
     devices().map_err(error)
 }
 
+/// List input devices as `(index, name, is_default)`.
+#[pyfunction]
+fn list_input_devices() -> PyResult<Vec<(usize, String, bool)>> {
+    recorder::input_devices().map_err(|message| error_with("device", message))
+}
+
 #[pymodule]
 fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Player>()?;
+    m.add_class::<recorder::Recorder>()?;
     m.add("SoundRsError", _py.get_type::<SoundRsError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(play_audio, &m)?)?;
@@ -271,6 +279,7 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;
     m.add_function(wrap_pyfunction!(list_devices, &m)?)?;
+    m.add_function(wrap_pyfunction!(list_input_devices, &m)?)?;
     m.add_function(wrap_pyfunction!(cli::cli, &m)?)?;
     Ok(())
 }
