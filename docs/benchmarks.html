@@ -48,14 +48,14 @@ slower.</p>
   <tr><th>Axis</th><th class="num">sound_rs</th><th class="num">Competitor</th><th class="num">Ratio</th></tr>
   <tr><td>Import, cold process</td><td class="num"><strong>1.1 ms</strong></td><td class="num">31.8 ms (soundfile)</td><td class="num">29×</td></tr>
   <tr><td>Metadata, 60 s file</td><td class="num"><strong>1.2 ms</strong></td><td class="num">31.7 ms</td><td class="num">26×</td></tr>
-  <tr><td>Decode WAV</td><td class="num"><strong>131 ms</strong></td><td class="num">155 ms</td><td class="num">1.2×</td></tr>
-  <tr><td>Decode FLAC</td><td class="num"><strong>265 ms</strong></td><td class="num">465 ms</td><td class="num">1.8×</td></tr>
-  <tr><td>Decode MP3</td><td class="num"><strong>247 ms</strong></td><td class="num">272 ms</td><td class="num">1.1×</td></tr>
-  <tr><td>Decode AAC</td><td class="num">361 ms</td><td class="num">not supported</td><td class="num">—</td></tr>
-  <tr><td>Time to first sound, 10 min</td><td class="num"><strong>8.8 ms</strong></td><td class="num">492 ms</td><td class="num">56×</td></tr>
-  <tr><td>Peak RSS, 10 min file</td><td class="num"><strong>43 MB</strong></td><td class="num">255 MB</td><td class="num">6×</td></tr>
-  <tr><td>Playback overhead, 3 s tone</td><td class="num"><strong>32 ms</strong></td><td class="num">148 ms</td><td class="num">4.6×</td></tr>
-  <tr><td>Batch decode, 2 FLAC files</td><td class="num"><strong>272 ms</strong></td><td class="num">448 ms</td><td class="num">1.6×</td></tr>
+  <tr><td>Decode WAV</td><td class="num"><strong>130 ms</strong></td><td class="num">157 ms</td><td class="num">1.2×</td></tr>
+  <tr><td>Decode FLAC</td><td class="num"><strong>265 ms</strong></td><td class="num">455 ms</td><td class="num">1.7×</td></tr>
+  <tr><td>Decode MP3</td><td class="num"><strong>241 ms</strong></td><td class="num">268 ms</td><td class="num">1.1×</td></tr>
+  <tr><td>Decode AAC</td><td class="num">349 ms</td><td class="num">not supported</td><td class="num">—</td></tr>
+  <tr><td>Time to first sound, 10 min</td><td class="num"><strong>11.3 ms</strong></td><td class="num">302 ms</td><td class="num">27×</td></tr>
+  <tr><td>Peak RSS, 10 min file</td><td class="num"><strong>43 MB</strong></td><td class="num">256 MB</td><td class="num">6×</td></tr>
+  <tr><td>Playback overhead, 3 s tone</td><td class="num"><strong>30 ms</strong></td><td class="num">241 ms</td><td class="num">8×</td></tr>
+  <tr><td>Batch decode, 2 FLAC files</td><td class="num"><strong>177 ms</strong></td><td class="num">299 ms</td><td class="num">1.7×</td></tr>
 </table>
 
 <h2 id="decode">Decode detail</h2>
@@ -71,8 +71,8 @@ slower.</p>
 <h2 id="memory">Playback and memory</h2>
 <table>
   <tr><th></th><th class="num">First sound</th><th class="num">Peak RSS</th><th class="num">Overhead</th></tr>
-  <tr><td>sound_rs Player, 10 min stream</td><td class="num">8.8 ms</td><td class="num">43 MB</td><td class="num">+32 ms</td></tr>
-  <tr><td>soundfile + sounddevice</td><td class="num">492 ms</td><td class="num">255 MB</td><td class="num">+148 ms</td></tr>
+  <tr><td>sound_rs Player, 10 min stream</td><td class="num">11.3 ms</td><td class="num">43 MB</td><td class="num">+30 ms</td></tr>
+  <tr><td>soundfile + sounddevice</td><td class="num">302 ms</td><td class="num">256 MB</td><td class="num">+241 ms</td></tr>
 </table>
 <p>The playback overhead row is a 3-second tone: wall clock minus the track duration. The
 player number uses a stream that is already open; the one-shot <code>play_array</code> pays

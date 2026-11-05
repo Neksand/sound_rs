@@ -177,14 +177,14 @@ build (`lto = "fat"`, `opt-level = 3`). Competitors: libsndfile 1.2
 |---|---|---|---|
 | import | 1.1 ms | 31.8 ms (soundfile) | 29× |
 | metadata (60 s file) | 1.2 ms | 31.7 ms (soundfile) | 26× |
-| decode WAV | 131 ms | 155 ms | 1.2× |
-| decode FLAC | 265 ms | 465 ms | 1.8× |
-| decode MP3 | 247 ms | 272 ms | 1.1× |
-| decode AAC | 361 ms | not supported | — |
-| time to first sound (10 min) | 8.8 ms | 492 ms | 56× |
+| decode WAV | 130 ms | 157 ms | 1.2× |
+| decode FLAC | 265 ms | 455 ms | 1.7× |
+| decode MP3 | 241 ms | 268 ms | 1.1× |
+| decode AAC | 349 ms | not supported | — |
+| time to first sound (10 min) | 11 ms | 302 ms | 27× |
 | peak RAM (10 min file) | 43 MB | 255 MB | 6× |
-| playback overhead | 32 ms | 148 ms | 4.6× |
-| batch decode (2 files) | 272 ms | 448 ms | 1.6× |
+| playback overhead | 30 ms | 241 ms | 8× |
+| batch decode (2 files) | 177 ms | 299 ms | 1.7× |
 
 **Import time** (cold process):
 
@@ -209,15 +209,15 @@ build (`lto = "fat"`, `opt-level = 3`). Competitors: libsndfile 1.2
 
 | | first sound | peak RSS |
 |---|---|---|
-| sound_rs `Player` | **8.8 ms** | **43 MB** |
-| soundfile + sounddevice | 492 ms | 255 MB |
+| sound_rs `Player` | **11.3 ms** | **43 MB** |
+| soundfile + sounddevice | 302 ms | 256 MB |
 
 **Playback of a 3 s tone** — overhead over the track duration:
 
 | | overhead |
 |---|---|
-| sound_rs `Player` (stream kept open) | **+32 ms** |
-| `sounddevice.play` (opens a stream per call) | +148 ms |
+| sound_rs `Player` (stream kept open) | **+30 ms** |
+| `sounddevice.play` (opens a stream per call) | +241 ms |
 | `sound_rs.play_array` (one-shot, opens a stream) | +182 ms |
 
 **Batch decode** two FLAC files: `load_many` **272 ms** vs a `soundfile` loop 448 ms.
