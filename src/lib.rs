@@ -104,10 +104,27 @@ fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> 
 }
 
 /// Decode a file to `(array, sample_rate)`, shape `(frames, channels)`, float32.
+///
+/// `sample_rate` resamples, `mono` folds every channel into one, `offset` and
+/// `duration` are seconds and decode only that window.
 #[pyfunction]
-fn load<'py>(py: Python<'py>, file_path: &str) -> PyResult<(Bound<'py, PyAny>, u32)> {
+#[pyo3(signature = (file_path, sample_rate=None, mono=false, offset=0.0, duration=None))]
+fn load<'py>(
+    py: Python<'py>,
+    file_path: &str,
+    sample_rate: Option<u32>,
+    mono: bool,
+    offset: f64,
+    duration: Option<f64>,
+) -> PyResult<(Bound<'py, PyAny>, u32)> {
+    let options = audio::LoadOptions {
+        sample_rate,
+        mono,
+        offset,
+        duration,
+    };
     let audio = py
-        .allow_threads(|| audio::decode(file_path))
+        .allow_threads(|| audio::decode_with_options(file_path, options))
         .map_err(error)?;
     into_array(py, audio)
 }
@@ -151,21 +168,37 @@ fn load_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<(Bound<'py, PyAny>,
 /// Decode many files in parallel. Returns `[(array, sample_rate), ...]` in the
 /// same order as `paths`. Failures raise for the first file that failed.
 #[pyfunction]
-#[pyo3(signature = (paths, threads=None))]
+#[pyo3(signature = (paths, threads=None, sample_rate=None, mono=false))]
 fn load_many<'py>(
     py: Python<'py>,
     paths: Vec<String>,
     threads: Option<usize>,
+    sample_rate: Option<u32>,
+    mono: bool,
 ) -> PyResult<Vec<(Bound<'py, PyAny>, u32)>> {
     use rayon::prelude::*;
 
+    let options = audio::LoadOptions {
+        sample_rate,
+        mono,
+        offset: 0.0,
+        duration: None,
+    };
     let decoded: Vec<Result<audio::Audio, String>> = py.allow_threads(|| {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads.unwrap_or(0))
             .build();
         match pool {
-            Ok(pool) => pool.install(|| paths.par_iter().map(|p| audio::decode(p)).collect()),
-            Err(_) => paths.iter().map(|p| audio::decode(p)).collect(),
+            Ok(pool) => pool.install(|| {
+                paths
+                    .par_iter()
+                    .map(|p| audio::decode_with_options(p, options))
+                    .collect()
+            }),
+            Err(_) => paths
+                .iter()
+                .map(|p| audio::decode_with_options(p, options))
+                .collect(),
         }
     });
 

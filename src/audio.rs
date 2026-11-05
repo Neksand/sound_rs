@@ -308,6 +308,84 @@ pub(crate) fn decode(path: &str) -> Result<Audio, String> {
     decode_symphonia(path)
 }
 
+/// Options for `load`. Defaults reproduce a plain full decode.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct LoadOptions {
+    pub sample_rate: Option<u32>,
+    pub mono: bool,
+    pub offset: f64,
+    pub duration: Option<f64>,
+}
+
+/// Decodes a window of a file through the streaming reader, then applies the
+/// requested channel fold and sample rate.
+pub(crate) fn decode_with_options(path: &str, options: LoadOptions) -> Result<Audio, String> {
+    let mut audio = if options.offset > 0.0 || options.duration.is_some() {
+        decode_range(path, options.offset, options.duration)?
+    } else {
+        decode(path)?
+    };
+
+    if options.mono && audio.channels > 1 {
+        audio.samples = convert_channels(&audio.samples, audio.channels, 1);
+        audio.channels = 1;
+    }
+
+    if let Some(rate) = options.sample_rate {
+        if rate != audio.sample_rate {
+            audio.samples =
+                resample_all(&audio.samples, audio.sample_rate, rate, audio.channels as usize);
+            audio.sample_rate = rate;
+        }
+    }
+
+    Ok(audio)
+}
+
+fn decode_range(
+    path: &str,
+    offset: f64,
+    duration: Option<f64>,
+) -> Result<Audio, String> {
+    let mut stream = Stream::open(path)?;
+    if offset > 0.0 {
+        stream.seek(offset)?;
+    }
+
+    let mut skip = 0u32;
+    let mut samples = Vec::new();
+    let mut frames = 0u64;
+    let mut limit: Option<u64> = None;
+
+    while let Some(chunk) = stream.next_chunk(&mut skip)? {
+        let channels = stream.channels.max(1) as usize;
+        if limit.is_none() {
+            limit = duration
+                .map(|seconds| (seconds.max(0.0) * stream.sample_rate as f64).round() as u64);
+        }
+        let available = chunk.len() / channels;
+        let take = match limit {
+            Some(limit) => available.min(limit.saturating_sub(frames) as usize),
+            None => available,
+        };
+        samples.extend_from_slice(&chunk[..take * channels]);
+        frames += take as u64;
+        if limit.is_some_and(|limit| frames >= limit) {
+            break;
+        }
+    }
+
+    if samples.is_empty() {
+        return Err(format!("'{path}' has no audio in the requested range"));
+    }
+
+    Ok(Audio {
+        sample_rate: stream.sample_rate,
+        channels: stream.channels,
+        samples,
+    })
+}
+
 /// Decodes bytes that are already in memory. Used by `load_bytes` and by the
 /// decoder fuzz test, which cannot afford a temp file per case.
 pub(crate) fn decode_bytes(data: &[u8]) -> Result<Audio, String> {

@@ -100,6 +100,16 @@ def main():
             else:
                 raise AssertionError("bad bytes must raise SoundRsError")
 
+        # load() options: rate, mono, window.
+        assert sound_rs.load(stereo, mono=True)[0].shape == (4410, 1)
+        resampled, rate = sound_rs.load(stereo, sample_rate=22050)
+        assert (rate, resampled.shape) == (22050, (2205, 2)), (rate, resampled.shape)
+        assert sound_rs.load(stereo, offset=0.05)[0].shape == (2205, 2)
+        window, _ = sound_rs.load(stereo, offset=0.05, duration=0.02)
+        assert window.shape == (882, 2), window.shape
+        folded, rate = sound_rs.load(stereo, mono=True, sample_rate=16000)
+        assert (rate, folded.shape) == (16000, (1600, 1)), (rate, folded.shape)
+
         # Batch decode must return the same arrays in the same order.
         batch = sound_rs.load_many([mono, stereo, mono])
         assert len(batch) == 3, len(batch)

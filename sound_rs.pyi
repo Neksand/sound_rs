@@ -32,14 +32,27 @@ def is_supported_format(file_path: str) -> bool:
 def get_audio_info(file_path: str) -> Tuple[int, int, float]:
     """`(sample_rate, channels, duration_seconds)` from the container header."""
 
-def load(file_path: str) -> Tuple[npt.NDArray[np.float32], int]:
-    """Decode to a float32 array of shape `(frames, channels)` and its rate."""
+def load(
+    file_path: str,
+    sample_rate: Optional[int] = None,
+    mono: bool = False,
+    offset: float = 0.0,
+    duration: Optional[float] = None,
+) -> Tuple[npt.NDArray[np.float32], int]:
+    """Decode to a float32 array of shape `(frames, channels)` and its rate.
+
+    `sample_rate` resamples, `mono` folds to one channel, `offset` and
+    `duration` (seconds) decode only that window.
+    """
 
 def load_bytes(data: bytes) -> Tuple[npt.NDArray[np.float32], int]:
     """Decode audio that is already in memory."""
 
 def load_many(
-    paths: Sequence[str], threads: Optional[int] = None
+    paths: Sequence[str],
+    threads: Optional[int] = None,
+    sample_rate: Optional[int] = None,
+    mono: bool = False,
 ) -> List[Tuple[npt.NDArray[np.float32], int]]:
     """Decode several files in parallel, in the order given."""
 
