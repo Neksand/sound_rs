@@ -24,7 +24,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html" aria-current="page">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html" aria-current="page">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">11 · Reference</p>
@@ -99,7 +99,7 @@ sound_rs.play_array(samples, 48000)</code></pre>
 source, which needs Rust. <code>pip install sound_rs --no-binary sound_rs</code> forces that
 path if a stale wheel is being picked up.</p>
 
-<div class="next"><a href="benchmarks.html">← Benchmarks</a><a href="changelog.html">Changelog →</a></div>
+<div class="next"><a href="guarantees.html">← Guarantees</a><a href="changelog.html">Changelog →</a></div>
   </main>
   <aside class="toc"><h2>On this page</h2><a href="#no-sound">No sound</a><a href="#busy">The device is busy</a><a href="#linux">Linux: ALSA and PipeWire</a><a href="#slow-start">Why the first play is slow</a><a href="#blocking">The call blocks forever</a><a href="#jupyter">Jupyter and notebooks</a><a href="#asyncio">asyncio</a><a href="#mp3-offset">MP3 samples do not line up with another library</a><a href="#numpy">"Input must be a 1D or 2D numpy array of float32"</a><a href="#m1">Intel Macs and ARM Linux</a></aside>
 </div>

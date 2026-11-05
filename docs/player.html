@@ -24,7 +24,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">04 · Guides</p>
@@ -84,6 +84,29 @@ arrays it is the array length divided by the sample rate.</p>
 print(player.duration)     # 213.4
 print(player.position)     # 0.0
 print(player.is_playing)   # True</code></pre>
+<h2 id="queue">Queue</h2>
+<p><code>enqueue</code> lines up the next file; when the current one ends the decoder opens it
+and continues on the same stream. Rate and channel count may differ between tracks.</p>
+<pre data-lang=""><code>with sound_rs.Player() as player:
+    player.play_file(&quot;first.flac&quot;)
+    player.enqueue(&quot;second.mp3&quot;)
+    player.enqueue(&quot;third.wav&quot;)
+    print(player.queue)        # [&#x27;second.mp3&#x27;, &#x27;third.wav&#x27;]
+    player.wait()              # plays all three</code></pre>
+<h2 id="feed">Pushing audio from Python</h2>
+<p>For synthesis or a network stream, feed samples instead of a file. <code>feed</code> blocks
+while the buffer is full, so a fast producer cannot exhaust memory; <code>stop</code> unblocks
+a waiting call within milliseconds.</p>
+<pre data-lang=""><code>import numpy as np
+import sound_rs
+
+player = sound_rs.Player()
+player.begin_feed(48000)
+for _ in range(100):
+    block = (0.2 * np.sin(np.arange(4800) * 0.057)).astype(np.float32)
+    player.feed(block)         # returns when the buffer has room
+player.end_feed()
+player.wait()</code></pre><div class="note"><b>Feed at the device rate for clean joins</b>Chunks are converted and resampled independently, so a non-device rate can click at chunk boundaries. Query <code>player.sample_rate</code> and feed that.</div>
 <h2 id="threading">Threading and the GIL</h2>
 <p>Playback and decoding run on Rust threads, and every blocking call releases the GIL.
 <code>player.wait()</code> in the main thread does not block an <code>asyncio</code> loop
@@ -104,7 +127,7 @@ without progress, then fails.</p>
 
 <div class="next"><a href="cli.html">← Command line</a><a href="streaming.html">Streaming and memory →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#lifecycle">Lifecycle</a><a href="#controls">Controls</a><a href="#seek">Seeking</a><a href="#volume">Volume</a><a href="#position">Position and duration</a><a href="#threading">Threading and the GIL</a><a href="#devices">Device selection</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#lifecycle">Lifecycle</a><a href="#controls">Controls</a><a href="#seek">Seeking</a><a href="#volume">Volume</a><a href="#position">Position and duration</a><a href="#queue">Queue</a><a href="#feed">Pushing audio from Python</a><a href="#threading">Threading and the GIL</a><a href="#devices">Device selection</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.2.2 — MIT</span>

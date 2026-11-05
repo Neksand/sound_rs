@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datasets and ML — sound_rs docs</title>
+<meta name="description" content="Load audio for machine learning: one call to resample to 16 kHz mono, parallel decoding across cores, and honest memory numbers.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/datasets.html">
+<meta property="og:title" content="Datasets and ML — sound_rs docs">
+<meta property="og:description" content="Load audio for machine learning: one call to resample to 16 kHz mono, parallel decoding across cores, and honest memory numbers.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.2</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html" aria-current="page">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">08 · Guides</p>
+<h1>Datasets and ML</h1>
+<p class="lead">Most dataset code wants the same thing: 16 kHz, mono, one array per
+file, as fast as the machine allows. That is one call.</p>
+
+<h2 id="one-call">One call</h2>
+<pre data-lang=""><code>import glob
+import sound_rs
+
+paths = sorted(glob.glob(&quot;dataset/**/*.flac&quot;, recursive=True))
+clips = sound_rs.load_many(paths, sample_rate=16000, mono=True)
+
+for audio, rate in clips[:3]:
+    print(audio.shape, rate)        # (frames, 1), 16000</code></pre>
+<p><code>load_many</code> decodes in parallel with the GIL released. On two FLAC files the
+harness measures 168 ms against 301 ms for a <code>soundfile</code> loop; the gap grows with
+file count until the cores are saturated.</p>
+
+<h2 id="single">One file, converted</h2>
+<pre data-lang=""><code>import sound_rs
+
+audio, rate = sound_rs.load(
+    &quot;clip.m4a&quot;,
+    sample_rate=16000,   # resampled with an anti-aliasing filter
+    mono=True,           # channels averaged
+)
+assert audio.dtype == &quot;float32&quot; and audio.ndim == 2</code></pre>
+<p>The order is fixed: fold channels first, then resample. Resampling before folding would do
+the same work twice on stereo.</p>
+
+<h2 id="window">A window, not the whole file</h2>
+<pre data-lang=""><code># first 10 seconds at 16 kHz, without decoding the rest
+audio, rate = sound_rs.load(&quot;lecture.m4a&quot;, duration=10.0, sample_rate=16000)
+
+# 30 s starting at 5 minutes
+audio, rate = sound_rs.load(&quot;lecture.m4a&quot;, offset=300.0, duration=30.0)</code></pre><div class="note"><b>Windows come from the streaming reader</b><code>offset</code> uses the same frame-accurate seek as the player, so the window starts on the requested sample, and the rest of the file is never decoded.</div>
+<h2 id="memory">Memory</h2>
+<table>
+  <tr><th>Task</th><th>Peak RAM</th></tr>
+  <tr><td>Decode 10 min stereo to float32</td><td class="num">211 MB of audio</td></tr>
+  <tr><td>Decode the same file as 16 kHz mono</td><td class="num">38 MB</td></tr>
+  <tr><td>Stream the same file for playback</td><td class="num">43 MB, independent of length</td></tr>
+</table>
+<p>Resampling to 16 kHz mono is not just faster downstream — it is 5× less memory than
+keeping 44.1 kHz stereo.</p>
+
+<h2 id="threads">Choosing the thread count</h2>
+<pre data-lang=""><code>clips = sound_rs.load_many(paths, threads=4)   # explicit
+clips = sound_rs.load_many(paths)              # one worker per core</code></pre>
+<p>Decoding is CPU-bound, so the ceiling is the core count. Feeding more threads than cores
+does not help; the benchmark's scaling scenario measures 1, 2, 4 and 8 workers.</p>
+
+<h2 id="not">When not to use this</h2>
+<ul>
+  <li><strong>Training on the fly</strong> — decode once and store the arrays; repeated
+      decoding of the same file is wasted CPU.</li>
+  <li><strong>Huge corpora</strong> — <code>load_many</code> returns everything at once. For a
+      corpus larger than RAM, call <code>load</code> per file inside your own batching.</li>
+  <li><strong>Augmentation and feature extraction</strong> — not implemented. This library
+      gets you clean float32 audio; the DSP belongs to your framework.</li>
+</ul>
+
+<div class="next"><a href="numpy.html">← NumPy and arrays</a><a href="recording.html">Recording →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#one-call">One call</a><a href="#single">One file, converted</a><a href="#window">A window, not the whole file</a><a href="#memory">Memory</a><a href="#threads">Choosing the thread count</a><a href="#not">When not to use this</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.2 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

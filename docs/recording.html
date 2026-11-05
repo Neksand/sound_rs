@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recording — sound_rs docs</title>
+<meta name="description" content="Record from a microphone with sound_rs: input devices, start/stop, fixed-length captures, macOS permissions, and writing a WAV.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/recording.html">
+<meta property="og:title" content="Recording — sound_rs docs">
+<meta property="og:description" content="Record from a microphone with sound_rs: input devices, start/stop, fixed-length captures, macOS permissions, and writing a WAV.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.2</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html" aria-current="page">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">09 · Guides</p>
+<h1>Recording</h1>
+<p class="lead">The mirror of playback: one input stream, float32 samples, and the same error
+contract.</p>
+
+<pre data-lang=""><code>import sound_rs
+
+print(sound_rs.list_input_devices())     # [(0, &#x27;MacBook Pro Microphone&#x27;, True)]
+
+with sound_rs.Recorder() as recorder:
+    audio, rate = recorder.record(5.0)   # five seconds
+print(audio.shape, rate)                 # (240000, 1) 48000</code></pre>
+<h2 id="devices">Devices</h2>
+<p><code>list_input_devices()</code> returns <code>(index, name, is_default)</code>. Pass the
+name to the constructor:</p>
+<pre data-lang=""><code>recorder = sound_rs.Recorder(device=&quot;MacBook Pro Microphone&quot;)
+print(recorder.device, recorder.sample_rate, recorder.channels)</code></pre>
+<p>The rate and channel count are whatever the device reports; the library does not resample
+on input. If you need 16 kHz mono, ask for it after the fact:</p>
+<pre data-lang=""><code>import sound_rs
+
+mono = audio.mean(axis=1, keepdims=True)     # or use numpy&#x27;s resampler of choice</code></pre>
+<h2 id="start-stop">start and stop</h2>
+<p><code>record(seconds)</code> is the convenient form. For an open-ended take, use
+<code>start()</code> and <code>stop()</code>:</p>
+<pre data-lang=""><code>recorder = sound_rs.Recorder()
+recorder.start()
+input(&quot;press enter to stop&quot;)
+audio, rate = recorder.stop()</code></pre>
+<h2 id="wav">Writing a WAV</h2>
+<p>The arrays are plain float32, so the standard library writes them:</p>
+<pre data-lang=""><code>import wave
+import numpy as np
+import sound_rs
+
+audio, rate = sound_rs.Recorder().record(3.0)
+pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(&quot;&lt;i2&quot;)
+
+with wave.open(&quot;take.wav&quot;, &quot;w&quot;) as handle:
+    handle.setnchannels(audio.shape[1])
+    handle.setsampwidth(2)
+    handle.setframerate(rate)
+    handle.writeframes(pcm.tobytes())</code></pre><div class="warn"><b>Microphone permission</b>macOS and Windows ask for microphone access the first time. A denied permission raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no silent fallback.</div>
+<h2 id="limits">Limits</h2>
+<ul>
+  <li>Captured samples are held in memory: the buffer caps at 230 M samples (~40 minutes of
+      48 kHz stereo). Past that the recorder raises instead of exhausting RAM.</li>
+  <li>No resampling, mixing or effects on input — capture is raw device audio.</li>
+  <li>Duplex (playing while recording) works because they are separate streams, but they are
+      independent objects with independent device handles.</li>
+</ul>
+
+<div class="next"><a href="datasets.html">← Datasets and ML</a><a href="migration.html">Coming from another library →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#devices">Devices</a><a href="#start-stop">start and stop</a><a href="#wav">Writing a WAV</a><a href="#limits">Limits</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.2 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

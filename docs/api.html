@@ -24,7 +24,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html" aria-current="page">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html" aria-current="page">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">09 · Reference</p>
@@ -102,10 +102,33 @@ output works at all.</p>
 returns an exit code. You do not call it from Python — see
 <a href="cli.html">Command line</a>.</p>
 
+<h2 id="load-bytes">load_bytes</h2>
+<pre data-lang=""><code>sound_rs.load_bytes(data: bytes) -&gt; tuple[numpy.ndarray, int]</code></pre>
+<p>Decodes audio that is already in memory. Same shape and rate as <code>load</code>. MP4
+priming cannot be read without a path, so AAC decoded this way may start a few milliseconds
+early. Corrupt data raises <code>SoundRsError</code> with <code>code="format"</code>.</p>
+
 <h2 id="list-devices">list_devices</h2>
 <pre data-lang=""><code>sound_rs.list_devices() -&gt; list[tuple[int, str, bool]]</code></pre>
 <p>Output devices as <code>(index, name, is_default)</code>. The index is only for display —
 pass the name to <code>play_audio</code> or <code>Player</code>.</p>
+
+<h2 id="recorder">Recorder</h2>
+<pre data-lang=""><code>sound_rs.Recorder(device: str | None = None)</code></pre>
+<p>Opens an input device. Raises <code>SoundRsError</code> with <code>code="device"</code> when
+there is no microphone or the OS denies access.</p>
+<table>
+  <tr><th>Member</th><th>Returns</th><th>Notes</th></tr>
+  <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
+  <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
+  <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
+  <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
+</table>
+
+<h2 id="list-input-devices">list_input_devices</h2>
+<pre data-lang=""><code>sound_rs.list_input_devices() -&gt; list[tuple[int, str, bool]]</code></pre>
+<p>Input devices as <code>(index, name, is_default)</code>. The name is what
+<code>Recorder(device=...)</code> accepts.</p>
 
 <h2 id="player">Player</h2>
 <pre data-lang=""><code>sound_rs.Player(device: str | None = None)</code></pre>
@@ -123,6 +146,11 @@ is used when omitted. The stream closes when the object is deleted or when the
   <tr><td class="num">stop()</td><td>None</td><td>Rewinds to zero</td></tr>
   <tr><td class="num">seek(seconds)</td><td>None</td><td>Frame-accurate, clamped to the track</td></tr>
   <tr><td class="num">wait()</td><td>None</td><td>Blocks until the source ends; GIL released</td></tr>
+  <tr><td class="num">enqueue(path)</td><td>None</td><td>Plays after the current track; up to 128 entries</td></tr>
+  <tr><td class="num">clear_queue()</td><td>None</td><td>Drops everything queued</td></tr>
+  <tr><td class="num">begin_feed(rate)</td><td>None</td><td>Switches to samples pushed from Python</td></tr>
+  <tr><td class="num">feed(array)</td><td>None</td><td>Blocks while the ring is full; call from one thread</td></tr>
+  <tr><td class="num">end_feed()</td><td>None</td><td>No more samples; finishes when the ring drains</td></tr>
 </table>
 
 <h3 id="properties">Properties</h3>
@@ -135,6 +163,9 @@ is used when omitted. The stream closes when the object is deleted or when the
   <tr><td class="num">position</td><td>float</td><td>Seconds played</td></tr>
   <tr><td class="num">duration</td><td>float | None</td><td>Seconds; <code>None</code> until known</td></tr>
   <tr><td class="num">is_playing</td><td>bool</td><td><code>False</code> when paused, stopped or finished</td></tr>
+  <tr><td class="num">queue</td><td>list[str]</td><td>Paths waiting behind the current track</td></tr>
+  <tr><td class="num">underruns</td><td>int</td><td>Callbacks that starved after audio started; healthy streams stay at 0</td></tr>
+  <tr><td class="num">latency</td><td>float | None</td><td>Last device latency in milliseconds</td></tr>
 </table>
 
 <pre data-lang=""><code>import sound_rs
@@ -156,7 +187,7 @@ with sound_rs.Player() as player:
 
 <div class="next"><a href="migration.html">← Coming from another library</a><a href="benchmarks.html">Benchmarks →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#list-devices">list_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.2.2 — MIT</span>

@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guarantees — sound_rs docs</title>
+<meta name="description" content="What sound_rs promises: error codes, no panics on bad input, released GIL, deterministic decode, bounded memory. And what it does not promise.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/guarantees.html">
+<meta property="og:title" content="Guarantees — sound_rs docs">
+<meta property="og:description" content="What sound_rs promises: error codes, no panics on bad input, released GIL, deterministic decode, bounded memory. And what it does not promise.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.2</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html" aria-current="page">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">11 · Reference</p>
+<h1>Guarantees</h1>
+<p class="lead">A library is trustworthy when its promises are written down and tested. This is
+the list, and the ones that are deliberately not on it.</p>
+
+<h2 id="errors">Errors</h2>
+<p>Every failure is <code>sound_rs.SoundRsError</code> (a <code>RuntimeError</code>) with a
+stable <code>.code</code>:</p>
+<table>
+  <tr><th>Code</th><th>Meaning</th></tr>
+  <tr><td class="num">io</td><td>The file could not be opened or read.</td></tr>
+  <tr><td class="num">format</td><td>The container or codec was not understood, or no audio was decodable.</td></tr>
+  <tr><td class="num">device</td><td>No output/input device, or the device refused to open.</td></tr>
+  <tr><td class="num">stalled</td><td>Playback made no progress for two seconds; the device probably disappeared.</td></tr>
+  <tr><td class="num">unsupported</td><td>The build lacks a feature (NumPy) or hit a documented limit.</td></tr>
+  <tr><td class="num">usage</td><td>The call order was wrong, for example <code>feed()</code> before <code>begin_feed()</code>.</td></tr>
+</table>
+<p>Codes are part of the API: renaming one is a breaking change.</p>
+
+<h2 id="panics">No panics on bad input</h2>
+<p>Corrupt files return an error, they do not abort the interpreter. This is enforced in
+<code>cargo test</code> by mutating every committed fixture ~200 times per file (bit flips,
+truncation, appended noise) and by feeding random bytes; every case must return <code>Ok</code>
+with finite samples or a non-empty error.</p>
+
+<h2 id="threads">Threads and the GIL</h2>
+<ul>
+  <li>Decoding, playback, recording and <code>wait()</code> release the GIL.</li>
+  <li>One <code>Player</code> is one stream: call its methods from one thread at a time.</li>
+  <li>Different players can be used from different threads, each with its own device handle.</li>
+</ul>
+
+<h2 id="determinism">Determinism</h2>
+<p>Decoding is deterministic: the same file produces the same float32 samples on every run
+and every platform. <code>tests/decode_regression.py</code> pins a SHA-256 of the PCM for five
+fixtures; a decoder change that moves a single sample fails CI.</p>
+
+<h2 id="memory">Memory</h2>
+<ul>
+  <li>Streaming playback uses a one-second ring buffer: memory does not grow with file length
+      (43 MB peak on a 10-minute file, measured).</li>
+  <li><code>load</code> allocates the decoded audio once; <code>load_many</code> allocates all
+      results at once, so size your batches.</li>
+  <li>The recorder caps its buffer at 230 M samples instead of growing without bound.</li>
+  <li>A 100-cycle playback soak grows RSS by less than 20 MB (measured: 0.0 MB).</li>
+</ul>
+
+<h2 id="quality">Audio quality</h2>
+<ul>
+  <li>Resampling uses rubato's FFT resampler: a 20 kHz tone downsampled to 24 kHz is filtered
+      below 10% of its level instead of folding back as an alias.</li>
+  <li>Gapless: encoder delay and padding are trimmed for MP3, OGG and AAC/MP4.</li>
+  <li>WAV and FLAC decode to PCM identical to libsndfile; MP3 matches to 1.6·10⁻⁵ with a
+      47-sample offset; AAC matches ffmpeg to 8·10⁻⁸.</li>
+</ul>
+
+<h2 id="not">What is not promised</h2>
+<ul>
+  <li><strong>A latency figure.</strong> Latency depends on the OS, the device and its buffer;
+      <code>Player.latency</code> reports what the backend measured, nothing more.</li>
+  <li><strong>Zero underruns everywhere.</strong> <code>Player.underruns</code> counts them;
+      on a loaded machine or a Bluetooth sink they will appear.</li>
+  <li><strong>Real-time safety of the Python API.</strong> Calling <code>feed()</code> from
+      Python is fine, but Python's scheduler is not a real-time scheduler.</li>
+  <li><strong>Bit-identical output across decoders.</strong> Different MP3 decoders trim delay
+      differently; we match length exactly and samples to 1.6·10⁻⁵.</li>
+</ul>
+
+<div class="next"><a href="benchmarks.html">← Benchmarks</a><a href="faq.html">Troubleshooting →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#errors">Errors</a><a href="#panics">No panics on bad input</a><a href="#threads">Threads and the GIL</a><a href="#determinism">Determinism</a><a href="#memory">Memory</a><a href="#quality">Audio quality</a><a href="#not">What is not promised</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.2 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

@@ -292,6 +292,37 @@ print(player.duration)     # 213.4
 print(player.position)     # 0.0
 print(player.is_playing)   # True
 """) + """
+<h2 id="queue">Queue</h2>
+<p><code>enqueue</code> lines up the next file; when the current one ends the decoder opens it
+and continues on the same stream. Rate and channel count may differ between tracks.</p>
+""" + code("""
+with sound_rs.Player() as player:
+    player.play_file("first.flac")
+    player.enqueue("second.mp3")
+    player.enqueue("third.wav")
+    print(player.queue)        # ['second.mp3', 'third.wav']
+    player.wait()              # plays all three
+""") + """
+<h2 id="feed">Pushing audio from Python</h2>
+<p>For synthesis or a network stream, feed samples instead of a file. <code>feed</code> blocks
+while the buffer is full, so a fast producer cannot exhaust memory; <code>stop</code> unblocks
+a waiting call within milliseconds.</p>
+""" + code("""
+import numpy as np
+import sound_rs
+
+player = sound_rs.Player()
+player.begin_feed(48000)
+for _ in range(100):
+    block = (0.2 * np.sin(np.arange(4800) * 0.057)).astype(np.float32)
+    player.feed(block)         # returns when the buffer has room
+player.end_feed()
+player.wait()
+""") + note(
+        "Feed at the device rate for clean joins",
+        "Chunks are converted and resampled independently, so a non-device rate can click at "
+        "chunk boundaries. Query <code>player.sample_rate</code> and feed that.",
+    ) + """
 <h2 id="threading">Threading and the GIL</h2>
 <p>Playback and decoding run on Rust threads, and every blocking call releases the GIL.
 <code>player.wait()</code> in the main thread does not block an <code>asyncio</code> loop
@@ -728,12 +759,41 @@ sound_rs.cli() -> int
 returns an exit code. You do not call it from Python — see
 <a href="cli.html">Command line</a>.</p>
 
+<h2 id="load-bytes">load_bytes</h2>
+""" + code("""
+sound_rs.load_bytes(data: bytes) -> tuple[numpy.ndarray, int]
+""") + """
+<p>Decodes audio that is already in memory. Same shape and rate as <code>load</code>. MP4
+priming cannot be read without a path, so AAC decoded this way may start a few milliseconds
+early. Corrupt data raises <code>SoundRsError</code> with <code>code="format"</code>.</p>
+
 <h2 id="list-devices">list_devices</h2>
 """ + code("""
 sound_rs.list_devices() -> list[tuple[int, str, bool]]
 """) + """
 <p>Output devices as <code>(index, name, is_default)</code>. The index is only for display —
 pass the name to <code>play_audio</code> or <code>Player</code>.</p>
+
+<h2 id="recorder">Recorder</h2>
+""" + code("""
+sound_rs.Recorder(device: str | None = None)
+""") + """
+<p>Opens an input device. Raises <code>SoundRsError</code> with <code>code="device"</code> when
+there is no microphone or the OS denies access.</p>
+<table>
+  <tr><th>Member</th><th>Returns</th><th>Notes</th></tr>
+  <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
+  <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
+  <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
+  <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
+</table>
+
+<h2 id="list-input-devices">list_input_devices</h2>
+""" + code("""
+sound_rs.list_input_devices() -> list[tuple[int, str, bool]]
+""") + """
+<p>Input devices as <code>(index, name, is_default)</code>. The name is what
+<code>Recorder(device=...)</code> accepts.</p>
 
 <h2 id="player">Player</h2>
 """ + code("""
@@ -753,6 +813,11 @@ is used when omitted. The stream closes when the object is deleted or when the
   <tr><td class="num">stop()</td><td>None</td><td>Rewinds to zero</td></tr>
   <tr><td class="num">seek(seconds)</td><td>None</td><td>Frame-accurate, clamped to the track</td></tr>
   <tr><td class="num">wait()</td><td>None</td><td>Blocks until the source ends; GIL released</td></tr>
+  <tr><td class="num">enqueue(path)</td><td>None</td><td>Plays after the current track; up to 128 entries</td></tr>
+  <tr><td class="num">clear_queue()</td><td>None</td><td>Drops everything queued</td></tr>
+  <tr><td class="num">begin_feed(rate)</td><td>None</td><td>Switches to samples pushed from Python</td></tr>
+  <tr><td class="num">feed(array)</td><td>None</td><td>Blocks while the ring is full; call from one thread</td></tr>
+  <tr><td class="num">end_feed()</td><td>None</td><td>No more samples; finishes when the ring drains</td></tr>
 </table>
 
 <h3 id="properties">Properties</h3>
@@ -765,6 +830,9 @@ is used when omitted. The stream closes when the object is deleted or when the
   <tr><td class="num">position</td><td>float</td><td>Seconds played</td></tr>
   <tr><td class="num">duration</td><td>float | None</td><td>Seconds; <code>None</code> until known</td></tr>
   <tr><td class="num">is_playing</td><td>bool</td><td><code>False</code> when paused, stopped or finished</td></tr>
+  <tr><td class="num">queue</td><td>list[str]</td><td>Paths waiting behind the current track</td></tr>
+  <tr><td class="num">underruns</td><td>int</td><td>Callbacks that starved after audio started; healthy streams stay at 0</td></tr>
+  <tr><td class="num">latency</td><td>float | None</td><td>Last device latency in milliseconds</td></tr>
 </table>
 
 """ + code("""
@@ -1110,5 +1178,236 @@ soundrs play test.wav  # actual output
 <p>If any of these fail with an import or library error, the audio backend did not load — see
 <a href="faq.html">Troubleshooting</a>. Decoding and <code>soundrs info</code> do not need an
 output device at all.</p>
+""",
+)
+
+
+page(
+    "datasets.html",
+    "Datasets and ML",
+    "Load audio for machine learning: one call to resample to 16 kHz mono, parallel decoding across cores, and honest memory numbers.",
+    """
+<p class="kicker">08 · Guides</p>
+<h1>Datasets and ML</h1>
+<p class="lead">Most dataset code wants the same thing: 16 kHz, mono, one array per
+file, as fast as the machine allows. That is one call.</p>
+
+<h2 id="one-call">One call</h2>
+""" + code("""
+import glob
+import sound_rs
+
+paths = sorted(glob.glob("dataset/**/*.flac", recursive=True))
+clips = sound_rs.load_many(paths, sample_rate=16000, mono=True)
+
+for audio, rate in clips[:3]:
+    print(audio.shape, rate)        # (frames, 1), 16000
+""") + """
+<p><code>load_many</code> decodes in parallel with the GIL released. On two FLAC files the
+harness measures 168 ms against 301 ms for a <code>soundfile</code> loop; the gap grows with
+file count until the cores are saturated.</p>
+
+<h2 id="single">One file, converted</h2>
+""" + code("""
+import sound_rs
+
+audio, rate = sound_rs.load(
+    "clip.m4a",
+    sample_rate=16000,   # resampled with an anti-aliasing filter
+    mono=True,           # channels averaged
+)
+assert audio.dtype == "float32" and audio.ndim == 2
+""") + """
+<p>The order is fixed: fold channels first, then resample. Resampling before folding would do
+the same work twice on stereo.</p>
+
+<h2 id="window">A window, not the whole file</h2>
+""" + code("""
+# first 10 seconds at 16 kHz, without decoding the rest
+audio, rate = sound_rs.load("lecture.m4a", duration=10.0, sample_rate=16000)
+
+# 30 s starting at 5 minutes
+audio, rate = sound_rs.load("lecture.m4a", offset=300.0, duration=30.0)
+""") + note(
+        "Windows come from the streaming reader",
+        "<code>offset</code> uses the same frame-accurate seek as the player, so the window "
+        "starts on the requested sample, and the rest of the file is never decoded.",
+    ) + """
+<h2 id="memory">Memory</h2>
+<table>
+  <tr><th>Task</th><th>Peak RAM</th></tr>
+  <tr><td>Decode 10 min stereo to float32</td><td class="num">211 MB of audio</td></tr>
+  <tr><td>Decode the same file as 16 kHz mono</td><td class="num">38 MB</td></tr>
+  <tr><td>Stream the same file for playback</td><td class="num">43 MB, independent of length</td></tr>
+</table>
+<p>Resampling to 16 kHz mono is not just faster downstream — it is 5× less memory than
+keeping 44.1 kHz stereo.</p>
+
+<h2 id="threads">Choosing the thread count</h2>
+""" + code("""
+clips = sound_rs.load_many(paths, threads=4)   # explicit
+clips = sound_rs.load_many(paths)              # one worker per core
+""") + """
+<p>Decoding is CPU-bound, so the ceiling is the core count. Feeding more threads than cores
+does not help; the benchmark's scaling scenario measures 1, 2, 4 and 8 workers.</p>
+
+<h2 id="not">When not to use this</h2>
+<ul>
+  <li><strong>Training on the fly</strong> — decode once and store the arrays; repeated
+      decoding of the same file is wasted CPU.</li>
+  <li><strong>Huge corpora</strong> — <code>load_many</code> returns everything at once. For a
+      corpus larger than RAM, call <code>load</code> per file inside your own batching.</li>
+  <li><strong>Augmentation and feature extraction</strong> — not implemented. This library
+      gets you clean float32 audio; the DSP belongs to your framework.</li>
+</ul>
+""",
+)
+
+page(
+    "recording.html",
+    "Recording",
+    "Record from a microphone with sound_rs: input devices, start/stop, fixed-length captures, macOS permissions, and writing a WAV.",
+    """
+<p class="kicker">09 · Guides</p>
+<h1>Recording</h1>
+<p class="lead">The mirror of playback: one input stream, float32 samples, and the same error
+contract.</p>
+
+""" + code("""
+import sound_rs
+
+print(sound_rs.list_input_devices())     # [(0, 'MacBook Pro Microphone', True)]
+
+with sound_rs.Recorder() as recorder:
+    audio, rate = recorder.record(5.0)   # five seconds
+print(audio.shape, rate)                 # (240000, 1) 48000
+""") + """
+<h2 id="devices">Devices</h2>
+<p><code>list_input_devices()</code> returns <code>(index, name, is_default)</code>. Pass the
+name to the constructor:</p>
+""" + code("""
+recorder = sound_rs.Recorder(device="MacBook Pro Microphone")
+print(recorder.device, recorder.sample_rate, recorder.channels)
+""") + """
+<p>The rate and channel count are whatever the device reports; the library does not resample
+on input. If you need 16 kHz mono, ask for it after the fact:</p>
+""" + code("""
+import sound_rs
+
+mono = audio.mean(axis=1, keepdims=True)     # or use numpy's resampler of choice
+""") + """
+<h2 id="start-stop">start and stop</h2>
+<p><code>record(seconds)</code> is the convenient form. For an open-ended take, use
+<code>start()</code> and <code>stop()</code>:</p>
+""" + code("""
+recorder = sound_rs.Recorder()
+recorder.start()
+input("press enter to stop")
+audio, rate = recorder.stop()
+""") + """
+<h2 id="wav">Writing a WAV</h2>
+<p>The arrays are plain float32, so the standard library writes them:</p>
+""" + code("""
+import wave
+import numpy as np
+import sound_rs
+
+audio, rate = sound_rs.Recorder().record(3.0)
+pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
+
+with wave.open("take.wav", "w") as handle:
+    handle.setnchannels(audio.shape[1])
+    handle.setsampwidth(2)
+    handle.setframerate(rate)
+    handle.writeframes(pcm.tobytes())
+""") + warn(
+        "Microphone permission",
+        "macOS and Windows ask for microphone access the first time. A denied permission "
+        "raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no "
+        "silent fallback.",
+    ) + """
+<h2 id="limits">Limits</h2>
+<ul>
+  <li>Captured samples are held in memory: the buffer caps at 230 M samples (~40 minutes of
+      48 kHz stereo). Past that the recorder raises instead of exhausting RAM.</li>
+  <li>No resampling, mixing or effects on input — capture is raw device audio.</li>
+  <li>Duplex (playing while recording) works because they are separate streams, but they are
+      independent objects with independent device handles.</li>
+</ul>
+""",
+)
+
+page(
+    "guarantees.html",
+    "Guarantees",
+    "What sound_rs promises: error codes, no panics on bad input, released GIL, deterministic decode, bounded memory. And what it does not promise.",
+    """
+<p class="kicker">11 · Reference</p>
+<h1>Guarantees</h1>
+<p class="lead">A library is trustworthy when its promises are written down and tested. This is
+the list, and the ones that are deliberately not on it.</p>
+
+<h2 id="errors">Errors</h2>
+<p>Every failure is <code>sound_rs.SoundRsError</code> (a <code>RuntimeError</code>) with a
+stable <code>.code</code>:</p>
+<table>
+  <tr><th>Code</th><th>Meaning</th></tr>
+  <tr><td class="num">io</td><td>The file could not be opened or read.</td></tr>
+  <tr><td class="num">format</td><td>The container or codec was not understood, or no audio was decodable.</td></tr>
+  <tr><td class="num">device</td><td>No output/input device, or the device refused to open.</td></tr>
+  <tr><td class="num">stalled</td><td>Playback made no progress for two seconds; the device probably disappeared.</td></tr>
+  <tr><td class="num">unsupported</td><td>The build lacks a feature (NumPy) or hit a documented limit.</td></tr>
+  <tr><td class="num">usage</td><td>The call order was wrong, for example <code>feed()</code> before <code>begin_feed()</code>.</td></tr>
+</table>
+<p>Codes are part of the API: renaming one is a breaking change.</p>
+
+<h2 id="panics">No panics on bad input</h2>
+<p>Corrupt files return an error, they do not abort the interpreter. This is enforced in
+<code>cargo test</code> by mutating every committed fixture ~200 times per file (bit flips,
+truncation, appended noise) and by feeding random bytes; every case must return <code>Ok</code>
+with finite samples or a non-empty error.</p>
+
+<h2 id="threads">Threads and the GIL</h2>
+<ul>
+  <li>Decoding, playback, recording and <code>wait()</code> release the GIL.</li>
+  <li>One <code>Player</code> is one stream: call its methods from one thread at a time.</li>
+  <li>Different players can be used from different threads, each with its own device handle.</li>
+</ul>
+
+<h2 id="determinism">Determinism</h2>
+<p>Decoding is deterministic: the same file produces the same float32 samples on every run
+and every platform. <code>tests/decode_regression.py</code> pins a SHA-256 of the PCM for five
+fixtures; a decoder change that moves a single sample fails CI.</p>
+
+<h2 id="memory">Memory</h2>
+<ul>
+  <li>Streaming playback uses a one-second ring buffer: memory does not grow with file length
+      (43 MB peak on a 10-minute file, measured).</li>
+  <li><code>load</code> allocates the decoded audio once; <code>load_many</code> allocates all
+      results at once, so size your batches.</li>
+  <li>The recorder caps its buffer at 230 M samples instead of growing without bound.</li>
+  <li>A 100-cycle playback soak grows RSS by less than 20 MB (measured: 0.0 MB).</li>
+</ul>
+
+<h2 id="quality">Audio quality</h2>
+<ul>
+  <li>Resampling uses rubato's FFT resampler: a 20 kHz tone downsampled to 24 kHz is filtered
+      below 10% of its level instead of folding back as an alias.</li>
+  <li>Gapless: encoder delay and padding are trimmed for MP3, OGG and AAC/MP4.</li>
+  <li>WAV and FLAC decode to PCM identical to libsndfile; MP3 matches to 1.6·10⁻⁵ with a
+      47-sample offset; AAC matches ffmpeg to 8·10⁻⁸.</li>
+</ul>
+
+<h2 id="not">What is not promised</h2>
+<ul>
+  <li><strong>A latency figure.</strong> Latency depends on the OS, the device and its buffer;
+      <code>Player.latency</code> reports what the backend measured, nothing more.</li>
+  <li><strong>Zero underruns everywhere.</strong> <code>Player.underruns</code> counts them;
+      on a loaded machine or a Bluetooth sink they will appear.</li>
+  <li><strong>Real-time safety of the Python API.</strong> Calling <code>feed()</code> from
+      Python is fine, but Python's scheduler is not a real-time scheduler.</li>
+  <li><strong>Bit-identical output across decoders.</strong> Different MP3 decoders trim delay
+      differently; we match length exactly and samples to 1.6·10⁻⁵.</li>
+</ul>
 """,
 )
