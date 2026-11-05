@@ -491,7 +491,7 @@ NAV = [
 PAGES = []
 
 
-def page(slug, title, description, body, toc=None):
+def page(slug, title, description, body, toc=None, hidden=False):
     PAGES.append(
         {
             "slug": slug,
@@ -499,6 +499,7 @@ def page(slug, title, description, body, toc=None):
             "description": description,
             "body": body,
             "toc": toc if toc is not None else toc_from(body),
+            "hidden": hidden,
         }
     )
 
@@ -523,13 +524,17 @@ def warn(title, text):
 
 def render():
     order = [(slug, title) for _, items in NAV for slug, title in items]
+    visible = [p for p in PAGES if not p["hidden"]]
     total = len(order)
 
     for index, item in enumerate(PAGES):
         slug = item["slug"]
-        position = next(i for i, (s, _) in enumerate(order) if s == slug)
-        prev_slug, prev_title = order[position - 1] if position > 0 else (None, None)
-        next_slug, next_title = order[position + 1] if position + 1 < total else (None, None)
+        position = next((i for i, (s, _) in enumerate(order) if s == slug), None)
+        if position is None:
+            prev_slug = prev_title = next_slug = next_title = None
+        else:
+            prev_slug, prev_title = order[position - 1] if position > 0 else (None, None)
+            next_slug, next_title = order[position + 1] if position + 1 < total else (None, None)
 
         nav_html = ['<details open><summary>Contents</summary><div class="side-body">']
         for section, items in NAV:
@@ -610,7 +615,7 @@ def render():
         handle.write(JS.strip() + "\n")
 
     entries = []
-    for item in PAGES:
+    for item in [p for p in PAGES if not p["hidden"]]:
         plain = re.sub(r"<[^>]+>", " ", item["body"])
         plain = re.sub(r"\s+", " ", html.unescape(plain)).strip()
         headings = " ".join(title for _, title in item["toc"])
@@ -628,7 +633,7 @@ def render():
     with open(os.path.join(HERE, "search.json"), "w") as handle:
         json.dump(entries, handle, ensure_ascii=False, indent=0)
 
-    urls = "\n".join(f"  <url><loc>{SITE}{p['slug']}</loc></url>" for p in PAGES)
+    urls = "\n".join(f"  <url><loc>{SITE}{p['slug']}</loc></url>" for p in visible)
     with open(os.path.join(HERE, "sitemap.xml"), "w") as handle:
         handle.write(
             '<?xml version="1.0" encoding="UTF-8"?>\n'

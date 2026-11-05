@@ -990,3 +990,22 @@ page(
 </ul>
 """,
 )
+
+
+page(
+    "404.html",
+    "Page not found",
+    "That page does not exist in the sound_rs documentation.",
+    """
+<p class="kicker">404</p>
+<h1>That page does not exist.</h1>
+<p class="lead">The link is broken or the page moved. Everything the docs cover is reachable
+from the list on the left.</p>
+<ul>
+  <li><a href="index.html">Overview</a></li>
+  <li><a href="quickstart.html">Quickstart</a></li>
+  <li><a href="api.html">API reference</a></li>
+</ul>
+""",
+    hidden=True,
+)
