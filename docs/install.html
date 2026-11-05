@@ -24,7 +24,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html" aria-current="page">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html" aria-current="page">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">01 · Start</p>
@@ -66,6 +66,8 @@ sudo dnf install alsa-lib            # Fedora</code></pre><div class="note"><b>D
 print(sound_rs.__version__)
 print(sound_rs.list_devices())        # [(0, &#x27;MacBook Pro Speakers&#x27;, True), ...]
 print(sound_rs.get_audio_info(&quot;song.mp3&quot;))</code></pre>
+<p>From a terminal, <code>soundrs --help</code> prints the same check as a command, with the
+documentation link. See <a href="cli.html">Command line</a>.</p>
 <p>No sound, or an empty device list? See <a href="faq.html">Troubleshooting</a>.</p>
 
 <div class="next"><a href="index.html">← Overview</a><a href="quickstart.html">Quickstart →</a></div>

@@ -24,10 +24,10 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html" aria-current="page">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html" aria-current="page">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
-<p class="kicker">08 · Reference</p>
+<p class="kicker">09 · Reference</p>
 <h1>API reference</h1>
 <p class="lead">Nine functions, one class. Everything raises <code>sound_rs.SoundRsError</code>,
 a subclass of <code>RuntimeError</code>, on failure.</p>
@@ -96,6 +96,12 @@ until playback ends.</p>
 <p>Generates a mono sine tone at half scale and plays it. Useful for checking that audio
 output works at all.</p>
 <pre data-lang=""><code>sound_rs.play_sine_wave(440.0, 1.0, 44100)</code></pre>
+<h2 id="cli">cli</h2>
+<pre data-lang=""><code>sound_rs.cli() -&gt; int</code></pre>
+<p>Entry point for the <code>soundrs</code> console script; reads <code>sys.argv</code> and
+returns an exit code. You do not call it from Python — see
+<a href="cli.html">Command line</a>.</p>
+
 <h2 id="list-devices">list_devices</h2>
 <pre data-lang=""><code>sound_rs.list_devices() -&gt; list[tuple[int, str, bool]]</code></pre>
 <p>Output devices as <code>(index, name, is_default)</code>. The index is only for display —
@@ -150,7 +156,7 @@ with sound_rs.Player() as player:
 
 <div class="next"><a href="migration.html">← Coming from another library</a><a href="benchmarks.html">Benchmarks →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#list-devices">list_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#list-devices">list_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.2.1 — MIT</span>

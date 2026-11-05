@@ -5,6 +5,7 @@
 //! whatever sample format that device actually wants.
 
 mod audio;
+mod cli;
 mod player;
 
 use pyo3::create_exception;
@@ -166,9 +167,8 @@ fn play_sine_wave(py: Python<'_>, frequency: f32, duration: f32, sample_rate: u3
     player.wait(py)
 }
 
-/// List output devices as `(index, name, is_default)`.
-#[pyfunction]
-fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
+/// Output devices as `(index, name, is_default)`. Shared by the API and the CLI.
+pub(crate) fn devices() -> Result<Vec<(usize, String, bool)>, String> {
     use cpal::traits::{DeviceTrait, HostTrait};
 
     let host = cpal::default_host();
@@ -176,7 +176,7 @@ fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
     let mut devices = Vec::new();
     let enumerated = host
         .output_devices()
-        .map_err(|e| error(format!("Cannot enumerate output devices: {e}")))?
+        .map_err(|e| format!("Cannot enumerate output devices: {e}"))?
         .filter_map(|device| device.name().ok())
         .enumerate();
     for (index, name) in enumerated {
@@ -184,6 +184,12 @@ fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
         devices.push((index, name, is_default));
     }
     Ok(devices)
+}
+
+/// List output devices as `(index, name, is_default)`.
+#[pyfunction]
+fn list_devices() -> PyResult<Vec<(usize, String, bool)>> {
+    devices().map_err(error)
 }
 
 #[pymodule]
@@ -199,5 +205,6 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;
     m.add_function(wrap_pyfunction!(list_devices, &m)?)?;
+    m.add_function(wrap_pyfunction!(cli::cli, &m)?)?;
     Ok(())
 }

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command line — sound_rs docs</title>
+<meta name="description" content="The soundrs command: play a file, inspect metadata, list output devices, and find the documentation from a terminal.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/cli.html">
+<meta property="og:title" content="Command line — sound_rs docs">
+<meta property="og:description" content="The soundrs command: play a file, inspect metadata, list output devices, and find the documentation from a terminal.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html" aria-current="page">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">03 · Start</p>
+<h1>Command line</h1>
+<p class="lead">Installing the package also installs <code>soundrs</code>. It exists so that a
+minute after <code>pip install</code> you can check that audio works and find the docs, without
+writing Python.</p>
+
+<pre data-lang="bash"><code>soundrs --help</code></pre><pre data-lang="text"><code>sound_rs — audio for Python
+
+Usage
+  soundrs &lt;command&gt; [options]
+  soundrs play &lt;file&gt; [--device &lt;name&gt;] [--volume &lt;0-4&gt;]
+  soundrs info &lt;file&gt;
+  soundrs devices
+  soundrs docs
+  soundrs --version
+  soundrs --help
+
+Commands
+  play     Play a file and wait until it ends.
+           --device &lt;name&gt;   output device, see `soundrs devices`
+           --volume &lt;number&gt; 0 to 4, default 1
+  info     Sample rate, channels and duration, read from the header only.
+  devices  Output devices, one per line.
+  docs     Print the documentation link.
+
+Links
+  Documentation  https://neksand.github.io/sound_rs/
+  Source         https://github.com/Neksand/sound_rs</code></pre>
+<h2 id="commands">Commands</h2>
+<table>
+  <tr><th>Command</th><th>What it does</th></tr>
+  <tr><td class="num">soundrs play FILE</td><td>Plays a file and waits. <code>--device</code> picks an output device, <code>--volume</code> takes 0…4.</td></tr>
+  <tr><td class="num">soundrs info FILE</td><td>Sample rate, channel count and duration from the container header — no decoding.</td></tr>
+  <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
+  <tr><td class="num">soundrs docs</td><td>Prints the documentation URL, for scripts and <code>open $(soundrs docs)</code>.</td></tr>
+  <tr><td class="num">soundrs --version</td><td>Version on one line, safe to parse.</td></tr>
+</table>
+<p><code>sound-rs</code> is installed as an alias of the same command.</p>
+
+<h2 id="examples">Examples</h2>
+<pre data-lang="bash"><code># does audio work at all?
+soundrs play ~/Music/test.flac
+
+# which device names can I pass to Player(device=...)?
+soundrs devices
+
+# what is this file before writing any code?
+soundrs info podcast.m4a</code></pre><pre data-lang="text"><code>$ soundrs info podcast.m4a
+file         podcast.m4a
+sample rate  44100 Hz
+channels     2
+duration     42:13.6 (2533.612 s)</code></pre><div class="note"><b>Exit codes</b><code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), <code>2</code> bad usage. Errors go to stderr, so the commands compose in shell pipelines.</div>
+<h2 id="install-check">Checking an install</h2>
+<p>After <code>pip install sound_rs</code>:</p>
+<pre data-lang="bash"><code>soundrs --version      # soundrs 0.2.2
+soundrs devices        # a device list means the audio backend loaded
+soundrs play test.wav  # actual output</code></pre>
+<p>If any of these fail with an import or library error, the audio backend did not load — see
+<a href="faq.html">Troubleshooting</a>. Decoding and <code>soundrs info</code> do not need an
+output device at all.</p>
+
+<div class="next"><a href="quickstart.html">← Quickstart</a><a href="player.html">The player →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#commands">Commands</a><a href="#examples">Examples</a><a href="#install-check">Checking an install</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

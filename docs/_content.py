@@ -54,6 +54,7 @@ alternatives.</p>
 <ul>
   <li><a href="install.html">Installation</a> — platforms, wheels, Linux audio libraries.</li>
   <li><a href="quickstart.html">Quickstart</a> — the five things most code does.</li>
+  <li><a href="cli.html">Command line</a> — <code>soundrs --help</code> without writing Python.</li>
   <li><a href="player.html">The player</a> — controls, seeking, lifecycle.</li>
   <li><a href="api.html">API reference</a> — every function and method.</li>
 </ul>
@@ -116,6 +117,8 @@ print(sound_rs.__version__)
 print(sound_rs.list_devices())        # [(0, 'MacBook Pro Speakers', True), ...]
 print(sound_rs.get_audio_info("song.mp3"))
 """) + """
+<p>From a terminal, <code>soundrs --help</code> prints the same check as a command, with the
+documentation link. See <a href="cli.html">Command line</a>.</p>
 <p>No sound, or an empty device list? See <a href="faq.html">Troubleshooting</a>.</p>
 """,
 )
@@ -214,7 +217,7 @@ page(
     "The player",
     "The sound_rs Player: one stream kept open, play, pause, resume, stop, frame-accurate seek, volume, position and duration.",
     """
-<p class="kicker">03 · Guides</p>
+<p class="kicker">04 · Guides</p>
 <h1>The player</h1>
 <p class="lead"><code>Player</code> owns one output stream for its whole lifetime. Every
 method below acts on that stream, so starting a track never reopens the device.</p>
@@ -316,7 +319,7 @@ page(
     "Streaming and memory",
     "How sound_rs streams a file with constant memory, why a 10-minute file costs 43 MB instead of 255 MB, and when to use load() instead.",
     """
-<p class="kicker">04 · Guides</p>
+<p class="kicker">05 · Guides</p>
 <h1>Streaming and memory</h1>
 <p class="lead"><code>play_file</code> never loads the track. A decoder thread fills a one-second
 ring buffer, and the audio callback drains it. Memory stays flat no matter how long the file is.</p>
@@ -383,7 +386,7 @@ page(
     "Formats and gapless",
     "Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.",
     """
-<p class="kicker">05 · Guides</p>
+<p class="kicker">06 · Guides</p>
 <h1>Formats and gapless</h1>
 <p class="lead">Five container families, every common bit depth, and gapless trimming for the
 lossy ones.</p>
@@ -459,7 +462,7 @@ page(
     "NumPy and arrays",
     "Array shapes, dtype rules, playing and decoding arrays with sound_rs, batch decoding, and the mistakes that cost the most time.",
     """
-<p class="kicker">06 · Guides</p>
+<p class="kicker">07 · Guides</p>
 <h1>NumPy and arrays</h1>
 <p class="lead">Two directions: arrays in for playback, arrays out for analysis. Both use
 float32 samples in the range −1.0 to 1.0.</p>
@@ -540,7 +543,7 @@ page(
     "Coming from another library",
     "Equivalent sound_rs code for sounddevice, soundfile, pydub and playsound, plus what changes when there is no ffmpeg and no array requirement.",
     """
-<p class="kicker">07 · Guides</p>
+<p class="kicker">08 · Guides</p>
 <h1>Coming from another library</h1>
 <p class="lead">Most Python audio code is three lines. Here is what those three lines become.</p>
 
@@ -628,7 +631,7 @@ page(
     "API reference",
     "Every function and method in sound_rs: signatures, arguments, return values, exceptions and a runnable example.",
     """
-<p class="kicker">08 · Reference</p>
+<p class="kicker">09 · Reference</p>
 <h1>API reference</h1>
 <p class="lead">Nine functions, one class. Everything raises <code>sound_rs.SoundRsError</code>,
 a subclass of <code>RuntimeError</code>, on failure.</p>
@@ -717,6 +720,14 @@ output works at all.</p>
 """ + code("""
 sound_rs.play_sine_wave(440.0, 1.0, 44100)
 """) + """
+<h2 id="cli">cli</h2>
+""" + code("""
+sound_rs.cli() -> int
+""") + """
+<p>Entry point for the <code>soundrs</code> console script; reads <code>sys.argv</code> and
+returns an exit code. You do not call it from Python — see
+<a href="cli.html">Command line</a>.</p>
+
 <h2 id="list-devices">list_devices</h2>
 """ + code("""
 sound_rs.list_devices() -> list[tuple[int, str, bool]]
@@ -782,7 +793,7 @@ page(
     "Benchmarks",
     "How sound_rs compares with libsndfile and sounddevice: methodology, full tables, and the cases where it loses.",
     """
-<p class="kicker">09 · Reference</p>
+<p class="kicker">10 · Reference</p>
 <h1>Benchmarks</h1>
 <p class="lead">Numbers with the method next to them, including the rows where the library is
 slower.</p>
@@ -861,7 +872,7 @@ page(
     "Troubleshooting",
     "Common sound_rs problems: no sound, busy device, ALSA and PipeWire on Linux, Jupyter, asyncio, and why the first play is slower.",
     """
-<p class="kicker">10 · Reference</p>
+<p class="kicker">11 · Reference</p>
 <h1>Troubleshooting</h1>
 <p class="lead">What to check when there is no sound, no device, or a call that blocks longer
 than expected.</p>
@@ -950,10 +961,18 @@ page(
     "Changelog",
     "sound_rs release history: what changed in each version and where to find the full release notes.",
     """
-<p class="kicker">11 · Reference</p>
+<p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
+
+<h2 id="v022">0.2.2</h2>
+<p class="kicker">command line</p>
+<ul>
+  <li><code>soundrs</code> console command: <code>play</code>, <code>info</code>,
+      <code>devices</code>, <code>docs</code>, <code>--version</code>, <code>--help</code>.</li>
+  <li>Documentation link in the package metadata.</li>
+</ul>
 
 <h2 id="v021">0.2.1</h2>
 <p class="kicker">packaging and metadata</p>
@@ -1008,4 +1027,88 @@ from the list on the left.</p>
 </ul>
 """,
     hidden=True,
+)
+
+
+page(
+    "cli.html",
+    "Command line",
+    "The soundrs command: play a file, inspect metadata, list output devices, and find the documentation from a terminal.",
+    """
+<p class="kicker">03 · Start</p>
+<h1>Command line</h1>
+<p class="lead">Installing the package also installs <code>soundrs</code>. It exists so that a
+minute after <code>pip install</code> you can check that audio works and find the docs, without
+writing Python.</p>
+
+""" + code("""
+soundrs --help
+""", "bash") + code("""
+sound_rs — audio for Python
+
+Usage
+  soundrs <command> [options]
+  soundrs play <file> [--device <name>] [--volume <0-4>]
+  soundrs info <file>
+  soundrs devices
+  soundrs docs
+  soundrs --version
+  soundrs --help
+
+Commands
+  play     Play a file and wait until it ends.
+           --device <name>   output device, see `soundrs devices`
+           --volume <number> 0 to 4, default 1
+  info     Sample rate, channels and duration, read from the header only.
+  devices  Output devices, one per line.
+  docs     Print the documentation link.
+
+Links
+  Documentation  https://neksand.github.io/sound_rs/
+  Source         https://github.com/Neksand/sound_rs
+""", "text") + """
+<h2 id="commands">Commands</h2>
+<table>
+  <tr><th>Command</th><th>What it does</th></tr>
+  <tr><td class="num">soundrs play FILE</td><td>Plays a file and waits. <code>--device</code> picks an output device, <code>--volume</code> takes 0…4.</td></tr>
+  <tr><td class="num">soundrs info FILE</td><td>Sample rate, channel count and duration from the container header — no decoding.</td></tr>
+  <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
+  <tr><td class="num">soundrs docs</td><td>Prints the documentation URL, for scripts and <code>open $(soundrs docs)</code>.</td></tr>
+  <tr><td class="num">soundrs --version</td><td>Version on one line, safe to parse.</td></tr>
+</table>
+<p><code>sound-rs</code> is installed as an alias of the same command.</p>
+
+<h2 id="examples">Examples</h2>
+""" + code("""
+# does audio work at all?
+soundrs play ~/Music/test.flac
+
+# which device names can I pass to Player(device=...)?
+soundrs devices
+
+# what is this file before writing any code?
+soundrs info podcast.m4a
+""", "bash") + code("""
+$ soundrs info podcast.m4a
+file         podcast.m4a
+sample rate  44100 Hz
+channels     2
+duration     42:13.6 (2533.612 s)
+""", "text") + note(
+        "Exit codes",
+        "<code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), "
+        "<code>2</code> bad usage. Errors go to stderr, so the commands compose in shell "
+        "pipelines.",
+    ) + """
+<h2 id="install-check">Checking an install</h2>
+<p>After <code>pip install sound_rs</code>:</p>
+""" + code("""
+soundrs --version      # soundrs 0.2.2
+soundrs devices        # a device list means the audio backend loaded
+soundrs play test.wav  # actual output
+""", "bash") + """
+<p>If any of these fail with an import or library error, the audio backend did not load — see
+<a href="faq.html">Troubleshooting</a>. Decoding and <code>soundrs info</code> do not need an
+output device at all.</p>
+""",
 )

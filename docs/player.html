@@ -24,10 +24,10 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
-<p class="kicker">03 · Guides</p>
+<p class="kicker">04 · Guides</p>
 <h1>The player</h1>
 <p class="lead"><code>Player</code> owns one output stream for its whole lifetime. Every
 method below acts on that stream, so starting a track never reopens the device.</p>
@@ -102,7 +102,7 @@ print(player.device, player.sample_rate, player.channels)</code></pre>
 player raises <code>SoundRsError</code> instead of hanging: playback stalls for two seconds
 without progress, then fails.</p>
 
-<div class="next"><a href="quickstart.html">← Quickstart</a><a href="streaming.html">Streaming and memory →</a></div>
+<div class="next"><a href="cli.html">← Command line</a><a href="streaming.html">Streaming and memory →</a></div>
   </main>
   <aside class="toc"><h2>On this page</h2><a href="#lifecycle">Lifecycle</a><a href="#controls">Controls</a><a href="#seek">Seeking</a><a href="#volume">Volume</a><a href="#position">Position and duration</a><a href="#threading">Threading and the GIL</a><a href="#devices">Device selection</a></aside>
 </div>

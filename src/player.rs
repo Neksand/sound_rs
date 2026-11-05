@@ -563,7 +563,7 @@ impl Player {
     }
 
     #[setter]
-    fn set_volume(&self, volume: f32) -> PyResult<()> {
+    pub(crate) fn set_volume(&self, volume: f32) -> PyResult<()> {
         self.lock()?.volume = volume.clamp(0.0, 4.0);
         Ok(())
     }

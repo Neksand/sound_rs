@@ -472,6 +472,7 @@ NAV = [
         ("index.html", "Overview"),
         ("install.html", "Installation"),
         ("quickstart.html", "Quickstart"),
+        ("cli.html", "Command line"),
     ]),
     ("Guides", [
         ("player.html", "The player"),

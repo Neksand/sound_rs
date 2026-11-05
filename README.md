@@ -14,7 +14,7 @@ minimp3 for MP3), resampling with [rubato](https://github.com/HEnquist/rubato),
 output through [cpal](https://github.com/RustAudio/cpal).
 
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
-API reference and the benchmark methodology.
+API reference, the `soundrs` command and the benchmark methodology.
 
 ---
 
@@ -51,6 +51,21 @@ Wheels are built for Linux (x86_64), Windows (amd64) and macOS (arm64) for
 Python 3.10–3.14. Other platforms build from source.
 
 ---
+
+## ⌨️ Command line
+
+Installing the package also installs `soundrs`, so you can check the setup and read the docs
+without opening Python:
+
+```bash
+soundrs --help       # commands and the documentation link
+soundrs devices      # output devices, default marked with *
+soundrs info a.flac  # rate, channels, duration from the header
+soundrs play a.flac --volume 0.5
+soundrs docs         # prints https://neksand.github.io/sound_rs/
+```
+
+Exit codes: `0` success, `1` runtime failure, `2` bad usage.
 
 ## 💻 Usage
 

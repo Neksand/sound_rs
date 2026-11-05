@@ -5,7 +5,9 @@ PYTHONPATH at a directory containing sound_rs.so / sound_rs*.so.
 """
 import math
 import os
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import wave
@@ -83,6 +85,30 @@ def main():
         assert isinstance(devices, list), devices
         for index, name, is_default in devices:
             assert isinstance(index, int) and isinstance(name, str) and isinstance(is_default, bool)
+
+    # The console script must exist and find the documentation.
+    script = shutil.which("soundrs") or os.path.join(
+        os.path.dirname(sys.executable), "soundrs"
+    )
+    if os.path.exists(script):
+        help_text = subprocess.run(
+            [script, "--help"], capture_output=True, text=True, check=True
+        ).stdout
+        assert "https://neksand.github.io/sound_rs/" in help_text, help_text
+        assert "play" in help_text and "info" in help_text, help_text
+
+        version = subprocess.run(
+            [script, "--version"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        assert version.startswith("soundrs "), version
+
+        info = subprocess.run(
+            [script, "info", mono], capture_output=True, text=True, check=True
+        ).stdout
+        assert "44100 Hz" in info and "0:00.1" in info, info
+
+        bad = subprocess.run([script, "nope"], capture_output=True, text=True)
+        assert bad.returncode == 2, bad.returncode
 
     if os.environ.get("SOUND_RS_PLAY") == "1":
         import time

@@ -16,6 +16,7 @@ __all__ = [
     "play_array",
     "play_audio",
     "play_sine_wave",
+    "cli",
     "__version__",
 ]
 
@@ -42,6 +43,9 @@ def play_array(array: npt.NDArray[np.float32], sample_rate: int) -> None:
     """Play a 1D mono `(samples,)` or 2D `(channels, samples)` float32 array."""
 
 def play_sine_wave(frequency: float, duration: float, sample_rate: int) -> None: ...
+
+def cli() -> int:
+    """Entry point for the `soundrs` console command (reads sys.argv)."""
 
 def list_devices() -> List[Tuple[int, str, bool]]:
     """Output devices as `(index, name, is_default)`."""
