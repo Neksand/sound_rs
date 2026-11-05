@@ -1,23 +1,29 @@
 # 🎵 sound_rs
 
-**sound_rs** is a fast, Rust-powered audio playback library for Python that I built
-and maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia),
-output through [cpal](https://github.com/RustAudio/cpal), so the same code runs on
-macOS, Windows and Linux.
+**sound_rs** is a fast, Rust-powered audio library for Python that I built and
+maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia) (plus
+minimp3 for MP3), resampling with [rubato](https://github.com/HEnquist/rubato),
+output through [cpal](https://github.com/RustAudio/cpal).
 
 ---
 
 ## 🚀 Features
 
 - **Formats:** WAV, MP3, FLAC, OGG/Vorbis, M4A, AAC — any bit depth, including 24-bit
-- **NumPy arrays:** play 1D mono `(samples,)` or 2D `(channels, samples)` float32 arrays
-- **Decode to array:** `load(path) -> (ndarray, sample_rate)`, shape `(frames, channels)`
-- **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded length matches the original. MP4 priming comes from the edit list; at most one trailing frame can remain, because the container does not declare it
-- **Fast metadata:** `get_audio_info` reads the container header; for AAC, whose container carries no channel layout, one packet is decoded to learn it
-- **Resampling:** linear interpolation to the device rate, channel folding to the device layout
-- **Device-native output:** the stream is opened in whatever sample format the device wants (f32, i16, u16, ...)
-- **Non-blocking for others:** playback blocks the calling thread but releases the GIL, so other Python threads keep running
-- **Tone generator:** `play_sine_wave(440, 2.0, 44100)`
+- **Streaming playback:** a two-hour file costs ~4 MB of RAM, not gigabytes, and the
+  first sound arrives in ~9 ms instead of after the whole decode
+- **`Player`:** one output stream stays open — `play`, `pause`, `resume`, `seek`,
+  `stop`, `volume`, `position`, `duration`
+- **Decode to NumPy:** `load(path) -> (ndarray, sample_rate)`, shape `(frames, channels)`
+- **Parallel decode:** `load_many(paths)` uses every core, with the GIL released
+- **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded
+  audio lines up with the original
+- **Fast metadata:** `get_audio_info` reads the container header, ~1 ms regardless of
+  file length
+- **Resampling:** rubato's FFT resampler with a proper anti-aliasing filter
+- **Device-native output:** the stream opens in whatever sample format the device
+  wants (f32, f64, i16, i32, u8, u16)
+- **Errors:** everything raises `sound_rs.SoundRsError` (a `RuntimeError` subclass)
 
 ---
 
@@ -27,109 +33,124 @@ macOS, Windows and Linux.
 pip install sound_rs
 ```
 
+Wheels are built for Linux (x86_64), Windows (amd64) and macOS (arm64) for
+Python 3.10–3.14. Other platforms build from source.
+
 ---
 
 ## 💻 Usage
 
-### Playback
+### One-shot playback
 
 ```python
 import sound_rs
 
-sound_rs.play_audio("sound.wav")
-sound_rs.play_audio("sound.mp3")
-sound_rs.play_audio("sound.flac")
-sound_rs.play_audio("sound.m4a")
+sound_rs.play_audio("sound.wav")          # blocks, GIL released
+sound_rs.play_audio("sound.mp3", device="MacBook Pro Speakers")
 ```
 
-### Inspect a file (no decoding)
-
-```python
-sample_rate, channels, duration = sound_rs.get_audio_info("sound.mp3")
-sound_rs.is_supported_format("sound.mp3")  # probes the header, does not decode
-```
-
-### Decode to a NumPy array
+### The player
 
 ```python
 import sound_rs
 
-audio, rate = sound_rs.load("music.flac")   # float32, shape (frames, channels)
+with sound_rs.Player() as player:
+    player.play_file("music.flac")   # returns immediately, streams from disk
+    player.volume = 0.7
+    player.seek(42.0)
+    player.pause()
+    player.resume()
+    print(player.position, player.duration)
+    player.wait()                    # block until it ends
+
+sound_rs.list_devices()              # [(0, "MacBook Pro Speakers", True), ...]
+```
+
+### Inspect and decode
+
+```python
+sample_rate, channels, duration = sound_rs.get_audio_info("music.mp3")  # no decode
+audio, rate = sound_rs.load("music.flac")                               # (frames, channels) float32
+
+pairs = sound_rs.load_many(["a.flac", "b.flac", "c.flac"])              # parallel
 ```
 
 ### From a NumPy array
 
 ```python
 import numpy as np
-import sound_rs
 
 rate = 44100
 t = np.linspace(0, 2.0, rate * 2, endpoint=False, dtype=np.float32)
-sound_rs.play_array(np.sin(2 * np.pi * 440 * t), rate)              # mono, 1D
-sound_rs.play_array(np.stack([left, right]), rate)                  # 2D, channels first
-```
-
-### Background playback
-
-```python
-import threading
-
-threading.Thread(target=sound_rs.play_audio, args=("long.mp3",)).start()
-```
-
-### Tone generator
-
-```python
-sound_rs.play_sine_wave(440.0, 1.0, 44100)  # frequency, duration, sample rate
+sound_rs.play_array(np.sin(2 * np.pi * 440 * t), rate)   # mono, 1D
+sound_rs.play_array(np.stack([left, right]), rate)       # 2D, channels first
+sound_rs.play_sine_wave(440.0, 1.0, 44100)
 ```
 
 ---
 
 ## 🧩 Benchmark
 
-`play_audio` is synchronous, so its wall-clock time is dominated by the track's
-own duration. The interesting numbers are **metadata**, **decode** and
-**overhead** (wall clock − audio duration) — and decode is only worth measuring
-if the output is correct, so every run also compares PCM against libsndfile.
+Every measurement runs in its own process: peak RSS is process-wide, so timing
+and memory cannot share one. Median and p95 over repeated runs, competitors run
+side by side on the same files.
 
 ```bash
-python examples/benchmark.py                        # generated 3s tone: decode + playback
-python examples/benchmark.py --compare              # + sounddevice / soundfile
-python examples/benchmark.py --files a.mp3 b.flac   # decode table for real files
+python bench/run.py                 # sound_rs only
+python bench/run.py --compare       # + soundfile / sounddevice
+python bench/run.py --reps 9
 ```
 
-**Hardware and setup I measured on:** Apple M5 Pro, macOS 26.6.2, Python 3.14.7,
-release build (`lto = "fat"`, `opt-level = 3`), 60 s of 44.1 kHz stereo,
-median and p95 of 7 runs, competitor is libsndfile (`soundfile` 0.14).
+**Hardware I measured on:** Apple M5 Pro, macOS 26.6.2, Python 3.14.7, release
+build (`lto = "fat"`, `opt-level = 3`). Competitors: libsndfile 1.2
+(`soundfile` 0.14), PortAudio (`sounddevice`). Corpus: 3 s and 10 min stereo
+44.1 kHz, generated by the harness.
 
-| format | metadata | decode (median / p95) | libsndfile | result | PCM vs libsndfile |
-|---|---|---|---|---|---|
-| WAV (PCM 16) | 0.02 ms | **9.1 / 11.2 ms** | 11.4 ms | 1.25× faster | identical |
-| FLAC | 0.03 ms | **16.3 / 17.7 ms** | 41.0 ms | 2.5× faster | identical |
-| MP3 | 0.02 ms | 33.8 / 34.3 ms | **24.5 ms** | 1.4× slower | 1.9e-07 |
-| M4A (AAC) | 0.17 ms | 34.7 / 38.2 ms | unsupported | sound_rs only | matches ffmpeg to 8e-08 |
+**Import time** (cold process):
 
-Playback of a 3 s tone, overhead over the track duration (median of 5):
+| | time | peak RSS |
+|---|---|---|
+| sound_rs | **1.1 ms** | 25 MB |
+| soundfile | 31.8 ms | 34 MB |
+| sounddevice | 75.3 ms | 32 MB |
 
-| | median | p95 | overhead |
-|---|---|---|---|
-| sound_rs | 3.124 s | 3.280 s | +0.124 s |
-| sounddevice | 3.125 s | 3.131 s | +0.125 s |
+**Metadata** (60 s file): sound_rs **1.2 ms**, soundfile 31.7 ms.
 
-What the numbers say, including the unflattering parts:
+**Decode** 60 s stereo, median / p95:
 
-- **Metadata no longer decodes the file.** Reading a 2-hour file costs the same
-  as reading a 3-second one, because it comes from the container header.
-- **PCM output matches libsndfile exactly** for WAV and FLAC, and to 1.9e-07
-  for MP3 — both trim the encoder delay and padding, so sample N means the
-  same thing in both libraries. For AAC/MP4 the priming is read from the MP4
-  edit list, which libsndfile cannot even decode.
-- **MP3 decoding is ~1.4× behind libmpg123.** That is the decoder itself, not
-  the plumbing; fixing it means a different MP3 decoder.
-- **Playback overhead is stream setup and teardown**, ~0.1 s per call. Reducing
-  it to single-digit milliseconds needs a persistent stream, which is the next
-  item on the roadmap.
+| format | sound_rs | libsndfile | result | PCM check |
+|---|---|---|---|---|
+| WAV | **131 / 160 ms** | 155 ms | 1.2× faster | identical |
+| FLAC | **265 / 267 ms** | 465 ms | 1.8× faster | identical |
+| MP3 | **247 / 249 ms** | 272 ms | 1.1× faster | 1.6e-05, 47-sample offset |
+| M4A (AAC) | 361 / 365 ms | unsupported | sound_rs only | matches ffmpeg to 8e-08 |
 
+**Streaming a 10-minute FLAC** — time to the first sound and peak memory:
+
+| | first sound | peak RSS |
+|---|---|---|
+| sound_rs `Player` | **8.8 ms** | **43 MB** |
+| soundfile + sounddevice | 492 ms | 255 MB |
+
+**Playback of a 3 s tone** — overhead over the track duration:
+
+| | overhead |
+|---|---|
+| sound_rs `Player` (stream kept open) | **+32 ms** |
+| `sounddevice.play` (opens a stream per call) | +148 ms |
+| `sound_rs.play_array` (one-shot, opens a stream) | +182 ms |
+
+**Batch decode** two FLAC files: `load_many` **272 ms** vs a `soundfile` loop 448 ms.
+
+What the numbers do not hide:
+
+- **MP3 output is offset by 47 samples (~1 ms) versus libsndfile and ffmpeg.**
+  Sample values agree to 1.6e-05 once aligned; the offset comes from how the
+  decoder delay is trimmed, and the length matches exactly.
+- **WAV decode is a memcpy race** with libsndfile; the gap there is small by
+  nature, the real wins are FLAC, metadata, memory and latency.
+- **AAC decoding is slower than everything else** — it is a newer, less tuned
+  decoder — but libsndfile cannot read AAC at all.
 
 ---
 
@@ -137,24 +158,24 @@ What the numbers say, including the unflattering parts:
 
 | Step | Feature | Description |
 |------|---------|-------------|
-| ✅ 1 | WAV playback | Core playback |
-| ✅ 2 | MP3, FLAC, M4A, AAC, 24-bit | Full symphonia decode path |
-| ✅ 3 | NumPy integration | 1D/2D float32 arrays |
-| ✅ 4 | Decode to array | `load(path) -> (ndarray, sample_rate)` without playing |
-| 🔜 5 | `Player` object | Persistent stream: pause, resume, seek, volume, position |
-| 🔜 6 | Device selection | `list_devices()`, choose input/output |
-| 🔜 7 | Recording | Microphone → array or WAV |
+| ✅ 1 | Playback + formats | WAV, MP3, FLAC, OGG, M4A, 24-bit |
+| ✅ 2 | NumPy integration | 1D/2D arrays, `load`, `load_many` |
+| ✅ 3 | `Player` | Persistent stream: pause, seek, volume, position |
+| ✅ 4 | Streaming decode | Constant memory, ~9 ms to first sound |
+| 🔜 5 | Device selection UI | Input devices, hot-swap on disconnect |
+| 🔜 6 | Recording | Microphone to array or WAV |
+| 🔜 7 | Effects | Basic gain/fade/mix utilities |
 
 ---
 
 ## 🧪 Development
 
 ```bash
-cargo test                      # resampler and channel conversion
-maturin develop --release       # build the extension into your venv
-python tests/smoke.py           # end-to-end decode checks
+cargo test                      # resampler, channel conversion, gapless, seek
+maturin develop --release       # build into your venv
+python tests/smoke.py           # end-to-end decode + API checks
 SOUND_RS_PLAY=1 python tests/smoke.py   # also plays (needs an audio device)
-python examples/benchmark.py
+python bench/run.py --compare   # full benchmark
 ```
 
 ---
@@ -164,7 +185,7 @@ python examples/benchmark.py
 - 🦀 **Rust** — performance and safety
 - 🔗 **PyO3** — Python bridge
 - 🧰 **Maturin** — building and publishing
-- 🔊 **cpal** + **symphonia** — audio backend and decoders
+- 🔊 **cpal**, **symphonia**, **minimp3**, **rubato** — output, decoding, resampling
 
 ---
 

@@ -72,12 +72,48 @@ def main():
         assert error < 1e-3, f"decoded samples are wrong (max error {error})"
         assert np.abs(data[:, 0] - data[:, 1]).max() == 0, "channels were mixed up"
 
+    if np is not None:
+        # Batch decode must return the same arrays in the same order.
+        batch = sound_rs.load_many([mono, stereo, mono])
+        assert len(batch) == 3, len(batch)
+        assert batch[0][0].shape == (4410, 1), batch[0][0].shape
+        assert batch[1][0].shape == (4410, 2), batch[1][0].shape
+
+        devices = sound_rs.list_devices()
+        assert isinstance(devices, list), devices
+        for index, name, is_default in devices:
+            assert isinstance(index, int) and isinstance(name, str) and isinstance(is_default, bool)
+
     if os.environ.get("SOUND_RS_PLAY") == "1":
         import time
 
         assert np is not None, "playback checks need numpy"
 
         sound_rs.play_audio(mono)
+
+        # The persistent player: duration/position/seek/pause without reopening
+        # the device, and playback that lines up with the file length.
+        with sound_rs.Player() as player:
+            player.play_file(mono)
+            assert abs(player.duration - 0.1) < 0.01, player.duration
+            player.wait()
+            assert abs(player.position - 0.1) < 0.02, player.position
+
+            player.play_file(stereo)
+            time.sleep(0.02)
+            player.pause()
+            frozen = player.position
+            time.sleep(0.05)
+            assert abs(player.position - frozen) < 1e-9, "pause must freeze the position"
+            player.resume()
+            player.seek(0.02)
+            player.wait()
+
+            player.volume = 0.5
+            assert player.volume == 0.5
+            player.play_array(np.zeros(4800, dtype=np.float32), 48000)
+            player.wait()
+            assert player.is_playing is False
 
         # A mono array must play for its real duration, not half of it.
         samples = np.sin(2 * np.pi * 440 * np.arange(int(0.2 * RATE)) / RATE).astype(np.float32)
