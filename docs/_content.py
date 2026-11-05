@@ -6,7 +6,7 @@ from _build import code, note, page, warn
 page(
     "index.html",
     "Overview",
-    "sound_rs plays and decodes MP3, FLAC, WAV, OGG and M4A in Python from one wheel, with no ffmpeg, constant memory and ~9 ms to first sound.",
+    "sound_rs plays and decodes MP3, FLAC, WAV, OGG and M4A in Python from one wheel, with no ffmpeg, constant memory and ~11 ms to first sound.",
     """
 <p class="kicker">Python · Rust · macOS / Windows / Linux</p>
 <h1>Audio for Python, without ffmpeg.</h1>
@@ -15,7 +15,7 @@ OGG, M4A — from a single wheel. The decoders are compiled in, so there is noth
 besides the package itself.</p>
 
 <div class="figures">
-  <div><span>First sound</span><b>9 ms</b><i>on a 10-minute file</i></div>
+  <div><span>First sound</span><b>11 ms</b><i>on a 10-minute file</i></div>
   <div><span>Memory</span><b>43 MB</b><i>while streaming that file</i></div>
   <div><span>Import</span><b>1.1 ms</b><i>versus 32 ms for soundfile</i></div>
   <div><span>Platforms</span><b>3</b><i>Linux, Windows, macOS</i></div>
@@ -376,8 +376,8 @@ first packet is decoded, not when the file ends.</p>
 <p>Ten-minute stereo FLAC, 44.1 kHz, measured with <code>bench/run.py</code> on an Apple M5 Pro:</p>
 <table>
   <tr><th></th><th class="num">sound_rs</th><th class="num">soundfile + sounddevice</th></tr>
-  <tr><td>Time to first sound</td><td class="num"><strong>8.8 ms</strong></td><td class="num">492 ms</td></tr>
-  <tr><td>Peak RSS</td><td class="num"><strong>43 MB</strong></td><td class="num">255 MB</td></tr>
+  <tr><td>Time to first sound</td><td class="num"><strong>11.3 ms</strong></td><td class="num">302 ms</td></tr>
+  <tr><td>Peak RSS</td><td class="num"><strong>43 MB</strong></td><td class="num">256 MB</td></tr>
 </table>
 <p>The competitor number is not a flaw in those libraries: their API takes an array, so the
 file has to be decoded before playback can start. Streaming is a different design.</p>
@@ -902,7 +902,7 @@ slower.</p>
   <tr><th>Format</th><th class="num">sound_rs</th><th class="num">libsndfile</th><th>PCM check</th></tr>
   <tr><td>WAV 16-bit</td><td class="num">131 / 160 ms</td><td class="num">155 ms</td><td>identical</td></tr>
   <tr><td>FLAC</td><td class="num">265 / 267 ms</td><td class="num">465 ms</td><td>identical</td></tr>
-  <tr><td>MP3</td><td class="num">247 / 249 ms</td><td class="num">272 ms</td><td>1.6·10⁻⁵, 47 samples offset</td></tr>
+  <tr><td>MP3</td><td class="num">241 / 249 ms</td><td class="num">268 ms</td><td>1.6·10⁻⁵, 47 samples offset</td></tr>
   <tr><td>M4A (AAC)</td><td class="num">361 / 365 ms</td><td class="num">unsupported</td><td>8·10⁻⁸ vs ffmpeg</td></tr>
 </table>
 

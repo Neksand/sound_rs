@@ -25,7 +25,7 @@ datasets, recording, queues. Build report: [docs/reports/0.3.0-report.md](docs/r
 
 - **Formats:** WAV, MP3, FLAC, OGG/Vorbis, M4A, AAC — any bit depth, including 24-bit
 - **Streaming playback:** a two-hour file costs ~4 MB of RAM, not gigabytes, and the
-  first sound arrives in ~9 ms instead of after the whole decode
+  first sound arrives in ~11 ms instead of after the whole decode
 - **`Player`:** one output stream stays open — `play`, `pause`, `resume`, `seek`,
   `stop`, `volume`, `position`, `duration`
 - **Decode to NumPy:** `load(path, sample_rate=, mono=, offset=, duration=)` — resample to
@@ -205,7 +205,7 @@ build (`lto = "fat"`, `opt-level = 3`). Competitors: libsndfile 1.2
 |---|---|---|---|---|
 | WAV | **131 / 160 ms** | 155 ms | 1.2× faster | identical |
 | FLAC | **265 / 267 ms** | 465 ms | 1.8× faster | identical |
-| MP3 | **247 / 249 ms** | 272 ms | 1.1× faster | 1.6e-05, 47-sample offset |
+| MP3 | **241 / 249 ms** | 268 ms | 1.1× faster | 1.6e-05, 47-sample offset |
 | M4A (AAC) | 361 / 365 ms | unsupported | sound_rs only | matches ffmpeg to 8e-08 |
 
 **Streaming a 10-minute FLAC** — time to the first sound and peak memory:
