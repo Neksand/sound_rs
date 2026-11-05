@@ -45,7 +45,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: pip install maturin numpy
-      - run: maturin develop --release
+      - run: maturin build --release -o dist
+      - run: pip install --no-deps dist/*.whl
       - run: python tests/smoke.py
       - run: python tests/decode_regression.py
       - run: python docs/check_api.py
