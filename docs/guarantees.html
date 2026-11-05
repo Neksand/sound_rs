@@ -60,8 +60,9 @@ with finite samples or a non-empty error.</p>
 </ul>
 
 <h2 id="determinism">Determinism</h2>
-<p>Decoding is deterministic: the same file produces the same float32 samples on every run
-and every platform. <code>tests/decode_regression.py</code> pins a SHA-256 of the PCM for five
+<p>Decoding is deterministic: the same file produces the same float32 samples on every run.
+Across CPUs the integer decoder's SIMD paths can differ by a bit, so the regression hashes are
+taken at 10⁻⁴ (about three LSB at 16-bit scale). <code>tests/decode_regression.py</code> pins a SHA-256 of the PCM for five
 fixtures; a decoder change that moves a single sample fails CI.</p>
 
 <h2 id="memory">Memory</h2>

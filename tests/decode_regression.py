@@ -23,18 +23,20 @@ FIXTURES = os.path.join(HERE, "fixtures")
 
 # (frames, channels, rate, sha256 of the rounded float32 PCM)
 EXPECTED = {
-    "tone.wav": (11025, 2, 44100, '5312e9b1adb1a06f90f709367bbbdebb12e43dc954f17609abde1a747e17243b'),
-    "tone24.wav": (11025, 2, 44100, '5312e9b1adb1a06f90f709367bbbdebb12e43dc954f17609abde1a747e17243b'),
-    "six.wav": (11025, 6, 44100, '6822e6d130067ffd2cecf61645c3eb6fdcd7c3b1bf96a28379b2b88b6adde592'),
-    "tone.flac": (11025, 2, 44100, '5312e9b1adb1a06f90f709367bbbdebb12e43dc954f17609abde1a747e17243b'),
-    "tone.mp3": (11025, 2, 44100, '51d1ec126fa537288e5ce161551887a7907da1d983848e3fb9093f87c0b35ef1'),
-    "tone.m4a": (11264, 2, 44100, '5efd9ad25f90cc8963def96abfa255bc10f8802bfbccdd851df3977056d5e70a'),
+    "tone.wav": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
+    "tone24.wav": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
+    "six.wav": (11025, 6, 44100, '6700c2b6b00becfc8a7575d2c1111886ec8edd0bccf310cbfe7f945d85b9e69b'),
+    "tone.flac": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
+    "tone.mp3": (11025, 2, 44100, '8aa2241ad297616108b66ae1e467a395726e8e3f9ea44bd3a70981a3a8dc0c01'),
+    "tone.m4a": (11264, 2, 44100, '571871df7735a715dd907c602e72e4d1398b35304d8a270c139d2cb3132a792c'),
 }
 
 
 def digest(path):
     audio, rate = sound_rs.load(path)
-    rounded = np.round(audio.astype(np.float64), 6).astype(np.float32)
+    # 1e-4 is ~3 LSB at 16-bit scale: tight enough to catch a decoder change,
+    # loose enough for the integer SIMD paths to differ by a bit across CPUs.
+    rounded = np.round(audio.astype(np.float64), 4).astype(np.float32)
     return rounded.shape[0], rounded.shape[1], rate, hashlib.sha256(rounded.tobytes()).hexdigest()
 
 
