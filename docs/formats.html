@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formats and gapless — sound_rs docs</title>
+<meta name="description" content="Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/formats.html">
+<meta property="og:title" content="Formats and gapless — sound_rs docs">
+<meta property="og:description" content="Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html" aria-current="page">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">05 · Guides</p>
+<h1>Formats and gapless</h1>
+<p class="lead">Five container families, every common bit depth, and gapless trimming for the
+lossy ones.</p>
+
+<h2 id="supported">Supported formats</h2>
+<table>
+  <tr><th>Format</th><th>Extensions</th><th>Decoder</th><th>Notes</th></tr>
+  <tr><td>WAV / AIFF</td><td class="num">.wav</td><td>symphonia</td><td>PCM 8/16/24/32-bit float and integer</td></tr>
+  <tr><td>FLAC</td><td class="num">.flac</td><td>symphonia</td><td>16/24-bit, any sample rate</td></tr>
+  <tr><td>MP3</td><td class="num">.mp3</td><td>minimp3</td><td>~45% faster than the symphonia decoder</td></tr>
+  <tr><td>OGG Vorbis</td><td class="num">.ogg</td><td>symphonia</td><td>—</td></tr>
+  <tr><td>AAC in MP4</td><td class="num">.m4a, .mp4</td><td>symphonia</td><td>priming read from the edit list</td></tr>
+</table>
+<p>There is no extension allowlist: whatever the probe understands is accepted. A file with
+the wrong extension but valid contents still opens.</p>
+
+<h2 id="gapless">Gapless</h2>
+<p>Lossy encoders add silence at both ends — a few thousand samples that are not part of the
+recording. Left in, every track gains a click of silence and offsets by a millisecond or two.
+sound_rs trims them:</p>
+<ul>
+  <li><strong>MP3 and OGG</strong> declare the delay and padding in the container.</li>
+  <li><strong>AAC in MP4</strong> records the priming in an edit list that symphonia parses
+      but does not expose, so the library reads the <code>elst</code> box itself.</li>
+</ul>
+<p>The result matches other decoders: a 60-second AAC file decodes to 2 646 016 frames and
+agrees with ffmpeg to 8·10⁻⁸ across the whole file.</p>
+
+<pre data-lang=""><code>import sound_rs, soundfile
+
+ours, _ = sound_rs.load(&quot;track.flac&quot;)
+theirs, _ = soundfile.read(&quot;track.flac&quot;, dtype=&quot;float32&quot;)
+print(ours.shape == theirs.shape, abs(ours - theirs).max())   # (True, 0.0)</code></pre><div class="warn"><b>MP3 is offset by 47 samples</b>Against libsndfile and ffmpeg, MP3 output starts 47 samples (~1 ms) earlier, because decoders trim the encoder delay differently. Lengths match exactly and sample values agree to 1.6·10⁻⁵ once aligned. It is inaudible; it matters if you compare PCM sample-by-sample across libraries.</div>
+<h2 id="depth">Bit depth</h2>
+<p>Everything is converted to float32 on decode. 24-bit files keep their resolution; there is
+no silent truncation to 16-bit anywhere in the path. On output the device decides the sample
+format — f32, f64, i16, i32, u8 or u16 — and conversion happens in the callback.</p>
+
+<h2 id="errors">When a file will not open</h2>
+<p>All failures raise <code>sound_rs.SoundRsError</code>, a <code>RuntimeError</code> subclass.</p>
+<pre data-lang=""><code>import sound_rs
+
+try:
+    sound_rs.play_audio(&quot;broken.mp3&quot;)
+except sound_rs.SoundRsError as error:
+    print(error)   # Unsupported or corrupt audio file &#x27;broken.mp3&#x27;: ...</code></pre>
+<p>Decoding stops at the first corrupt packet rather than returning truncated audio, except
+for a file that ends early: a truncated tail is played up to the last good packet.</p>
+
+<h2 id="probe">Checking without decoding</h2>
+<pre data-lang=""><code>import sound_rs
+
+sound_rs.is_supported_format(&quot;maybe.mp3&quot;)   # True / False, header only
+sound_rs.get_audio_info(&quot;maybe.mp3&quot;)        # (rate, channels, seconds)</code></pre>
+<p>Neither call decodes the audio, so both stay around a millisecond on a two-hour file.</p>
+
+<div class="next"><a href="streaming.html">← Streaming and memory</a><a href="numpy.html">NumPy and arrays →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#supported">Supported formats</a><a href="#gapless">Gapless</a><a href="#depth">Bit depth</a><a href="#errors">When a file will not open</a><a href="#probe">Checking without decoding</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

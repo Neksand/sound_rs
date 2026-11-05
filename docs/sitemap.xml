@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://neksand.github.io/sound_rs/index.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/install.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/quickstart.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/player.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/streaming.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/formats.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/numpy.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/migration.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/api.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/benchmarks.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/faq.html</loc></url>
+  <url><loc>https://neksand.github.io/sound_rs/changelog.html</loc></url>
+</urlset>

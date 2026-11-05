@@ -33,7 +33,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dynamic = ["version"]
-urls = { "Homepage" = "https://pypi.org/project/sound-rs/", "Repository" = "https://github.com/Neksand/sound_rs", "Issues" = "https://github.com/Neksand/sound_rs/issues", "Changelog" = "https://github.com/Neksand/sound_rs/releases", "Source" = "https://github.com/Neksand/sound_rs" }
+urls = { "Homepage" = "https://pypi.org/project/sound-rs/", "Repository" = "https://github.com/Neksand/sound_rs", "Issues" = "https://github.com/Neksand/sound_rs/issues", "Changelog" = "https://github.com/Neksand/sound_rs/releases", "Documentation" = "https://neksand.github.io/sound_rs/", "Source" = "https://github.com/Neksand/sound_rs" }
 
 [project.optional-dependencies]
 numpy = ["numpy>=1.20"]

@@ -5,12 +5,16 @@
 [![Python](https://img.shields.io/pypi/pyversions/sound_rs)](https://pypi.org/project/sound-rs/)
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows%20%7C%20macOS-blue)](#installation)
 [![Typed](https://img.shields.io/badge/typing-typed-blue)](sound_rs.pyi)
+[![Docs](https://img.shields.io/badge/docs-neksand.github.io%2Fsound__rs-ff5a36)](https://neksand.github.io/sound_rs/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **sound_rs** is a fast, Rust-powered audio library for Python that I built and
 maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia) (plus
 minimp3 for MP3), resampling with [rubato](https://github.com/HEnquist/rubato),
 output through [cpal](https://github.com/RustAudio/cpal).
+
+**Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
+API reference and the benchmark methodology.
 
 ---
 
@@ -201,6 +205,7 @@ maturin develop --release       # build into your venv
 python tests/smoke.py           # end-to-end decode + API checks
 SOUND_RS_PLAY=1 python tests/smoke.py   # also plays (needs an audio device)
 python bench/run.py --compare   # full benchmark
+python3 docs/_build.py          # rebuild the documentation site
 ```
 
 ---

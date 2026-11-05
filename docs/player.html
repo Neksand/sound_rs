@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The player — sound_rs docs</title>
+<meta name="description" content="The sound_rs Player: one stream kept open, play, pause, resume, stop, frame-accurate seek, volume, position and duration.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/player.html">
+<meta property="og:title" content="The player — sound_rs docs">
+<meta property="og:description" content="The sound_rs Player: one stream kept open, play, pause, resume, stop, frame-accurate seek, volume, position and duration.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">03 · Guides</p>
+<h1>The player</h1>
+<p class="lead"><code>Player</code> owns one output stream for its whole lifetime. Every
+method below acts on that stream, so starting a track never reopens the device.</p>
+
+<pre data-lang=""><code>import sound_rs
+
+player = sound_rs.Player()                 # opens the default device
+player.play_file(&quot;first.flac&quot;)             # returns immediately
+player.wait()
+
+player.play_file(&quot;second.mp3&quot;)             # no device setup, starts at once
+player.stop()
+del player                                 # closes the stream</code></pre><div class="note"><b>Use it as a context manager</b><code>with sound_rs.Player() as player:</code> closes the stream on exit, including when an exception is raised. Without it, the stream closes when the object is garbage collected, which you cannot predict.</div>
+<h2 id="lifecycle">Lifecycle</h2>
+<table>
+  <tr><th>State</th><th>What it means</th><th>Leaves it</th></tr>
+  <tr><td class="num">idle</td><td>Stream open, nothing loaded</td><td><code>play_file</code>, <code>play_array</code></td></tr>
+  <tr><td class="num">playing</td><td>Callback writes audio</td><td><code>pause</code>, <code>stop</code>, end of source</td></tr>
+  <tr><td class="num">paused</td><td>Callback writes silence, position frozen</td><td><code>resume</code>, <code>stop</code></td></tr>
+  <tr><td class="num">finished</td><td>Source exhausted, stream still open</td><td><code>play_*</code>, <code>resume</code> (replays)</td></tr>
+</table>
+
+<h2 id="controls">Controls</h2>
+<table>
+  <tr><th>Call</th><th>Effect</th></tr>
+  <tr><td class="num">play_file(path)</td><td>Streams a file from disk. Returns immediately.</td></tr>
+  <tr><td class="num">play_array(arr, rate)</td><td>Plays an in-memory array; resampled to the device once, up front.</td></tr>
+  <tr><td class="num">pause()</td><td>Stops producing sound and freezes <code>position</code>.</td></tr>
+  <tr><td class="num">resume()</td><td>Continues from the paused position, or replays from the start if finished.</td></tr>
+  <tr><td class="num">stop()</td><td>Rewinds to zero, keeps the stream open.</td></tr>
+  <tr><td class="num">seek(seconds)</td><td>Jumps; works while paused.</td></tr>
+  <tr><td class="num">wait()</td><td>Blocks until the source ends (GIL released).</td></tr>
+  <tr><td class="num">del player</td><td>Stops the decoder and closes the stream (or use <code>with</code>).</td></tr>
+</table>
+
+<h2 id="seek">Seeking</h2>
+<p>Seeking a streamed file is accurate to the frame. Containers can only seek to a packet
+boundary, so the player reads the packet's real timestamp and drops the difference. A seek to
+<code>0.5</code> in a 16 kHz file lands on frame 8000, not on the nearest packet start.</p>
+<pre data-lang=""><code>player.play_file(&quot;track.flac&quot;)
+player.seek(90.5)          # 1:30.5
+player.wait()
+print(player.position)     # ~ track length, not the seek offset</code></pre><div class="note"><b>Seeking past the end</b>Requests beyond the track are clamped to the last frame. <code>position</code> keeps counting from the seek target, so <code>duration</code> and <code>position</code> stay in the same units.</div>
+<h2 id="volume">Volume</h2>
+<p>Applied in the callback, so it changes instantly and does not touch the decoded data.
+Range is 0 to 4; values outside are clamped. Volume 1.0 is unity.</p>
+<pre data-lang=""><code>player.volume = 0.25       # quiet
+player.volume = 1.0        # unity</code></pre>
+<h2 id="position">Position and duration</h2>
+<p>Both are seconds, read from the audio clock, not from wall time. For files the duration
+comes from the container header and is available right after <code>play_file</code>. For
+arrays it is the array length divided by the sample rate.</p>
+<pre data-lang=""><code>player.play_file(&quot;track.mp3&quot;)
+print(player.duration)     # 213.4
+print(player.position)     # 0.0
+print(player.is_playing)   # True</code></pre>
+<h2 id="threading">Threading and the GIL</h2>
+<p>Playback and decoding run on Rust threads, and every blocking call releases the GIL.
+<code>player.wait()</code> in the main thread does not block an <code>asyncio</code> loop
+running in another thread, and <code>threading.Thread(target=sound_rs.play_audio, ...)</code>
+works as expected.</p>
+<p>One player is one stream. Do not call methods on the same player from several threads at
+once; create one player per thread instead.</p>
+
+<h2 id="devices">Device selection</h2>
+<pre data-lang=""><code>import sound_rs
+
+print(sound_rs.list_devices())
+player = sound_rs.Player(device=&quot;MacBook Pro Speakers&quot;)
+print(player.device, player.sample_rate, player.channels)</code></pre>
+<p>The device is opened once, at construction. If a device disappears mid-playback, the
+player raises <code>SoundRsError</code> instead of hanging: playback stalls for two seconds
+without progress, then fails.</p>
+
+<div class="next"><a href="quickstart.html">← Quickstart</a><a href="streaming.html">Streaming and memory →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#lifecycle">Lifecycle</a><a href="#controls">Controls</a><a href="#seek">Seeking</a><a href="#volume">Volume</a><a href="#position">Position and duration</a><a href="#threading">Threading and the GIL</a><a href="#devices">Device selection</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installation — sound_rs docs</title>
+<meta name="description" content="How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the Linux audio library it needs.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/install.html">
+<meta property="og:title" content="Installation — sound_rs docs">
+<meta property="og:description" content="How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the Linux audio library it needs.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html" aria-current="page">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">01 · Start</p>
+<h1>Installation</h1>
+<p class="lead">One command. Wheels carry the decoders, so no ffmpeg or development headers
+are needed.</p>
+
+<pre data-lang="bash"><code>pip install sound_rs</code></pre>
+<h2 id="requirements">Requirements</h2>
+<ul>
+  <li>Python 3.10 or newer, CPython.</li>
+  <li>Linux x86_64, Windows amd64 or macOS arm64 — the platforms below ship prebuilt wheels.</li>
+  <li>NumPy only if you use <code>play_array</code>, <code>load</code> or <code>load_many</code>.</li>
+</ul>
+
+<table>
+  <tr><th>Platform</th><th>Wheel</th><th>Python</th></tr>
+  <tr><td>Linux x86_64</td><td class="num">manylinux_2_17</td><td class="num">3.10–3.14</td></tr>
+  <tr><td>Windows amd64</td><td class="num">win_amd64</td><td class="num">3.10–3.14</td></tr>
+  <tr><td>macOS arm64</td><td class="num">macosx_11_0_arm64</td><td class="num">3.10–3.14</td></tr>
+</table>
+
+<p>Anything else — musl, ARM Linux, Intel Macs, PyPy — falls back to the source distribution,
+which needs a Rust toolchain (<code>cargo</code>) on the machine.</p>
+
+<h2 id="from-source">From source</h2>
+<pre data-lang="bash"><code>git clone https://github.com/Neksand/sound_rs
+cd sound_rs
+pip install maturin
+maturin develop --release</code></pre>
+<h2 id="linux-audio">Linux audio</h2>
+<p>Playback uses ALSA through <code>cpal</code>. Most desktops already have the runtime
+library; a minimal container or server needs it explicitly:</p>
+<pre data-lang="bash"><code>sudo apt install libasound2          # Debian / Ubuntu (libasound2t64 on 24.04+)
+sudo dnf install alsa-lib            # Fedora</code></pre><div class="note"><b>Decoding does not need ALSA</b>If the library is missing, <code>import sound_rs</code> fails at load time, not on the first play. Install the package above, or use a build with playback disabled.</div>
+<h2 id="check">Check it works</h2>
+<pre data-lang=""><code>import sound_rs
+
+print(sound_rs.__version__)
+print(sound_rs.list_devices())        # [(0, &#x27;MacBook Pro Speakers&#x27;, True), ...]
+print(sound_rs.get_audio_info(&quot;song.mp3&quot;))</code></pre>
+<p>No sound, or an empty device list? See <a href="faq.html">Troubleshooting</a>.</p>
+
+<div class="next"><a href="index.html">← Overview</a><a href="quickstart.html">Quickstart →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#requirements">Requirements</a><a href="#from-source">From source</a><a href="#linux-audio">Linux audio</a><a href="#check">Check it works</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

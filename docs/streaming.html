@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Streaming and memory — sound_rs docs</title>
+<meta name="description" content="How sound_rs streams a file with constant memory, why a 10-minute file costs 43 MB instead of 255 MB, and when to use load() instead.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/streaming.html">
+<meta property="og:title" content="Streaming and memory — sound_rs docs">
+<meta property="og:description" content="How sound_rs streams a file with constant memory, why a 10-minute file costs 43 MB instead of 255 MB, and when to use load() instead.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html" aria-current="page">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">04 · Guides</p>
+<h1>Streaming and memory</h1>
+<p class="lead"><code>play_file</code> never loads the track. A decoder thread fills a one-second
+ring buffer, and the audio callback drains it. Memory stays flat no matter how long the file is.</p>
+
+<h2 id="how">How it works</h2>
+<ol>
+  <li>The decoder thread reads a packet, decodes it to float32, converts the channel count
+      and resamples to the device rate.</li>
+  <li>The result goes into a ring buffer sized for one second of device audio.</li>
+  <li>The audio callback pops samples from that buffer. When it is empty, the callback
+      writes silence and keeps the stream alive.</li>
+  <li>Seeking replaces the ring buffer and repositions the decoder; the old audio that was
+      still queued is discarded and does not count towards the new position.</li>
+</ol>
+<p>Because the decoder runs ahead by at most a second, the first sound arrives as soon as the
+first packet is decoded, not when the file ends.</p>
+
+<h2 id="numbers">Numbers</h2>
+<p>Ten-minute stereo FLAC, 44.1 kHz, measured with <code>bench/run.py</code> on an Apple M5 Pro:</p>
+<table>
+  <tr><th></th><th class="num">sound_rs</th><th class="num">soundfile + sounddevice</th></tr>
+  <tr><td>Time to first sound</td><td class="num"><strong>8.8 ms</strong></td><td class="num">492 ms</td></tr>
+  <tr><td>Peak RSS</td><td class="num"><strong>43 MB</strong></td><td class="num">255 MB</td></tr>
+</table>
+<p>The competitor number is not a flaw in those libraries: their API takes an array, so the
+file has to be decoded before playback can start. Streaming is a different design.</p>
+
+<h2 id="choose">play_file or load?</h2>
+<table>
+  <tr><th>You want</th><th>Use</th><th>Memory</th></tr>
+  <tr><td>Play a file</td><td class="num">Player.play_file</td><td>constant, ~1 s of audio</td></tr>
+  <tr><td>Analyse the samples</td><td class="num">load</td><td>whole file as float32</td></tr>
+  <tr><td>Play an array you already have</td><td class="num">play_array</td><td>one copy at device format</td></tr>
+  <tr><td>Play a file, need the samples too</td><td class="num">load, then play_array</td><td>whole file</td></tr>
+</table>
+<p>A 10-minute stereo file is 211 MB in float32. That is fine for analysis and wasteful for
+playback.</p>
+
+<pre data-lang=""><code>import sound_rs
+
+# streaming: memory stays flat, start is immediate
+with sound_rs.Player() as player:
+    player.play_file(&quot;lecture-2h.m4a&quot;)
+    player.wait()
+
+# analysis: everything in RAM, decoded in parallel with other files
+clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;])</code></pre>
+<h2 id="caveats">Caveats</h2>
+<ul>
+  <li><code>duration</code> for a streamed file comes from the header; a VBR MP3 without a
+      frame count reports <code>None</code> until the decoder reaches the end.</li>
+  <li>Seeking in OGG and MP4 is exact; seeking in a stream without an index (rare) may take
+      longer because the decoder has to walk forward.</li>
+  <li>Only playback streams. <code>load</code> and <code>load_many</code> always decode
+      fully — that is their job.</li>
+</ul>
+
+<div class="next"><a href="player.html">← The player</a><a href="formats.html">Formats and gapless →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#how">How it works</a><a href="#numbers">Numbers</a><a href="#choose">play_file or load?</a><a href="#caveats">Caveats</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

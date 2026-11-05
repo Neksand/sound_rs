@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coming from another library — sound_rs docs</title>
+<meta name="description" content="Equivalent sound_rs code for sounddevice, soundfile, pydub and playsound, plus what changes when there is no ffmpeg and no array requirement.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/migration.html">
+<meta property="og:title" content="Coming from another library — sound_rs docs">
+<meta property="og:description" content="Equivalent sound_rs code for sounddevice, soundfile, pydub and playsound, plus what changes when there is no ffmpeg and no array requirement.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html" aria-current="page">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">07 · Guides</p>
+<h1>Coming from another library</h1>
+<p class="lead">Most Python audio code is three lines. Here is what those three lines become.</p>
+
+<h2 id="sounddevice">From sounddevice</h2>
+<pre data-lang=""><code># before
+import sounddevice as sd
+import soundfile as sf
+
+data, rate = sf.read(&quot;track.flac&quot;)
+sd.play(data, rate)
+sd.wait()
+
+# after
+import sound_rs
+
+sound_rs.play_audio(&quot;track.flac&quot;)</code></pre>
+<p>You lose the array, which you did not need for playback, and gain no ffmpeg and no
+per-call device setup. If you do need the samples, <code>sound_rs.load</code> returns them in
+the same shape as <code>sf.read</code>.</p>
+<p>For a persistent stream with pause and seek, <code>sounddevice</code> needs an
+<code>OutputStream</code> plus a callback queue; <code>sound_rs.Player</code> is that in one
+object.</p>
+
+<h2 id="soundfile">From soundfile</h2>
+<pre data-lang=""><code># before
+import soundfile as sf
+data, rate = sf.read(&quot;track.m4a&quot;, dtype=&quot;float32&quot;)
+
+# after
+import sound_rs
+data, rate = sound_rs.load(&quot;track.m4a&quot;)</code></pre><div class="note"><b>AAC and M4A</b>libsndfile cannot read MP4/AAC. That is the case where this swap is not optional.</div>
+<h2 id="pydub">From pydub</h2>
+<pre data-lang=""><code># before — needs an ffmpeg binary on PATH
+from pydub import AudioSegment
+from pydub.playback import play
+
+segment = AudioSegment.from_file(&quot;track.mp3&quot;)
+play(segment)
+
+# after
+import sound_rs
+
+sound_rs.play_audio(&quot;track.mp3&quot;)</code></pre>
+<p>No subprocess, no temporary WAV, no ffmpeg install step for your users. The trade: pydub
+also does cutting, concatenation and format conversion, which sound_rs does not.</p>
+
+<h2 id="playsound">From playsound / simpleaudio</h2>
+<pre data-lang=""><code># before — one shot, no controls, format support varies by platform
+from playsound import playsound
+
+playsound(&quot;track.mp3&quot;)
+
+# after
+import sound_rs
+
+sound_rs.play_audio(&quot;track.mp3&quot;)</code></pre>
+<p>Same one-line call, but the format support is the same on every platform and the call
+releases the GIL.</p>
+
+<h2 id="tradeoffs">What you gain, what you give up</h2>
+<table>
+  <tr><th></th><th>sound_rs</th><th>soundfile + sounddevice</th><th>pydub</th></tr>
+  <tr><td>Formats</td><td>WAV, FLAC, MP3, OGG, M4A</td><td>WAV, FLAC, MP3; no AAC</td><td>anything ffmpeg reads</td></tr>
+  <tr><td>External tools</td><td>none</td><td>none</td><td>ffmpeg binary</td></tr>
+  <tr><td>Playback without loading</td><td>yes</td><td>no</td><td>no</td></tr>
+  <tr><td>Editing (cut, mix, convert)</td><td>no</td><td>no</td><td>yes</td></tr>
+  <tr><td>Platforms</td><td>3, wheels</td><td>many</td><td>any with ffmpeg</td></tr>
+</table>
+
+<div class="next"><a href="numpy.html">← NumPy and arrays</a><a href="api.html">API reference →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#sounddevice">From sounddevice</a><a href="#soundfile">From soundfile</a><a href="#pydub">From pydub</a><a href="#playsound">From playsound / simpleaudio</a><a href="#tradeoffs">What you gain, what you give up</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

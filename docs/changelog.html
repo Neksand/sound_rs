@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Changelog — sound_rs docs</title>
+<meta name="description" content="sound_rs release history: what changed in each version and where to find the full release notes.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/changelog.html">
+<meta property="og:title" content="Changelog — sound_rs docs">
+<meta property="og:description" content="sound_rs release history: what changed in each version and where to find the full release notes.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html" aria-current="page">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">11 · Reference</p>
+<h1>Changelog</h1>
+<p class="lead">Short history. Full notes with diffs live on
+<a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
+
+<h2 id="v021">0.2.1</h2>
+<p class="kicker">packaging and metadata</p>
+<ul>
+  <li><code>sound_rs.__version__</code>.</li>
+  <li>Metadata for discovery: keywords, classifiers, documentation links; wheels and
+      <code>requires-python</code> now agree on Python 3.10+.</li>
+  <li>Small internal cleanups; no behaviour change.</li>
+</ul>
+
+<h2 id="v020">0.2.0</h2>
+<p class="kicker">streaming player</p>
+<ul>
+  <li><code>Player</code> with play, pause, resume, stop, seek, volume, position, duration.</li>
+  <li>Streaming decode: constant memory, ~9 ms to first sound on a 10-minute file.</li>
+  <li>rubato resampler replaces linear interpolation; downsampling no longer aliases.</li>
+  <li>MP3 decoded with minimp3 (1.1× faster than libsndfile, previously slower).</li>
+  <li><code>load_many</code>, <code>list_devices</code>, device selection, typed stubs,
+      <code>SoundRsError</code>.</li>
+</ul>
+
+<h2 id="v018">0.1.8</h2>
+<p class="kicker">correctness</p>
+<ul>
+  <li>Gapless trimming for MP3 and OGG; AAC priming read from the MP4 edit list.</li>
+  <li>Metadata without decoding; header-only duration.</li>
+  <li>Playback waits for the exact device drain time instead of a fixed 100 ms.</li>
+</ul>
+
+<h2 id="v017">0.1.7</h2>
+<p class="kicker">builds</p>
+<ul>
+  <li>Wheels for Linux, Windows and macOS across Python 3.10–3.14, published from CI.</li>
+</ul>
+
+<div class="next"><a href="faq.html">← Troubleshooting</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

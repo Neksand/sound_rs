@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — sound_rs docs</title>
+<meta name="description" content="Common sound_rs problems: no sound, busy device, ALSA and PipeWire on Linux, Jupyter, asyncio, and why the first play is slower.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/faq.html">
+<meta property="og:title" content="Troubleshooting — sound_rs docs">
+<meta property="og:description" content="Common sound_rs problems: no sound, busy device, ALSA and PipeWire on Linux, Jupyter, asyncio, and why the first play is slower.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html" aria-current="page">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">10 · Reference</p>
+<h1>Troubleshooting</h1>
+<p class="lead">What to check when there is no sound, no device, or a call that blocks longer
+than expected.</p>
+
+<h2 id="no-sound">No sound</h2>
+<ol>
+  <li><code>sound_rs.list_devices()</code> — if the list is empty, the OS sees no output device.</li>
+  <li><code>sound_rs.play_sine_wave(440.0, 1.0, 44100)</code> — if this is silent, the problem
+      is the device, not the file.</li>
+  <li>Check the system volume and the default output device; the player follows the OS default.</li>
+  <li>On macOS, the terminal or IDE may need microphone/audio permission for output routing in
+      some sandboxed setups.</li>
+</ol>
+
+<h2 id="busy">The device is busy</h2>
+<p><code>SoundRsError: Cannot open output stream</code> usually means another application holds
+the device in exclusive mode — a DAW, a call, or another Python process with an open player.
+Close one player before opening another, or use a different device:</p>
+<pre data-lang=""><code>import sound_rs
+
+print(sound_rs.list_devices())
+sound_rs.play_audio(&quot;track.mp3&quot;, device=&quot;Built-in Audio Analog Stereo&quot;)</code></pre>
+<h2 id="linux">Linux: ALSA and PipeWire</h2>
+<p>Playback goes through ALSA. On PipeWire systems install <code>pipewire-alsa</code>; on
+PulseAudio systems install <code>pulseaudio-alsa</code>, so ALSA has a bridge to the sound
+server.</p>
+<p>In a container there is no sound server and no device: that is expected. Use
+<code>load</code> for decoding — it needs no audio device.</p>
+
+<h2 id="slow-start">Why the first play is slow</h2>
+<p><code>play_audio</code> and <code>play_array</code> open the output device on every call:
+roughly 0.1–0.2 s before the first sample. <code>Player</code> opens it once, which brings the
+overhead down to about 30 ms.</p>
+<pre data-lang=""><code>with sound_rs.Player() as player:
+    player.play_file(&quot;a.flac&quot;); player.wait()
+    player.play_file(&quot;b.flac&quot;); player.wait()   # no device setup</code></pre>
+<h2 id="blocking">The call blocks forever</h2>
+<p>It should not. Playback without progress for two seconds raises
+<code>SoundRsError: Playback stalled</code> instead of hanging. If you see it, the device
+probably disappeared — reopen the player and retry.</p>
+<p>If you need playback in the background, use a thread or <code>Player.play_file</code>,
+which already returns immediately.</p>
+
+<h2 id="jupyter">Jupyter and notebooks</h2>
+<p>Blocking calls work, but a long track freezes the cell. Use the player:</p>
+<pre data-lang=""><code>player = sound_rs.Player()
+player.play_file(&quot;lecture.mp3&quot;)
+# the cell returns; more code runs while it plays
+player.position</code></pre>
+<h2 id="asyncio">asyncio</h2>
+<p><code>play_audio</code> and <code>wait</code> release the GIL but they are still blocking
+calls. Off-load them:</p>
+<pre data-lang=""><code>import asyncio
+import sound_rs
+
+await asyncio.to_thread(sound_rs.play_audio, &quot;track.flac&quot;)</code></pre>
+<h2 id="mp3-offset">MP3 samples do not line up with another library</h2>
+<p>Different decoders trim the encoder delay slightly differently. sound_rs starts 47 samples
+(~1 ms) earlier than libsndfile and ffmpeg on LAME files; lengths match exactly. If you compare
+waveforms, align first. See <a href="formats.html#gapless">Formats and gapless</a>.</p>
+
+<h2 id="numpy">"Input must be a 1D or 2D numpy array of float32"</h2>
+<p>NumPy's maths returns float64 by default:</p>
+<pre data-lang=""><code>samples = (0.2 * np.sin(2 * np.pi * 440 * np.arange(48000) / 48000))
+samples = samples.astype(np.float32)          # required
+sound_rs.play_array(samples, 48000)</code></pre>
+<h2 id="m1">Intel Macs and ARM Linux</h2>
+<p>Only macOS arm64, Windows amd64 and Linux x86_64 have wheels. Elsewhere pip builds from
+source, which needs Rust. <code>pip install sound_rs --no-binary sound_rs</code> forces that
+path if a stale wheel is being picked up.</p>
+
+<div class="next"><a href="benchmarks.html">← Benchmarks</a><a href="changelog.html">Changelog →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#no-sound">No sound</a><a href="#busy">The device is busy</a><a href="#linux">Linux: ALSA and PipeWire</a><a href="#slow-start">Why the first play is slow</a><a href="#blocking">The call blocks forever</a><a href="#jupyter">Jupyter and notebooks</a><a href="#asyncio">asyncio</a><a href="#mp3-offset">MP3 samples do not line up with another library</a><a href="#numpy">"Input must be a 1D or 2D numpy array of float32"</a><a href="#m1">Intel Macs and ARM Linux</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

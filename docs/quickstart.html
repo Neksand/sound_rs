@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quickstart — sound_rs docs</title>
+<meta name="description" content="The five things most sound_rs code does: play a file, control it, play an array, read metadata, decode to NumPy.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/quickstart.html">
+<meta property="og:title" content="Quickstart — sound_rs docs">
+<meta property="og:description" content="The five things most sound_rs code does: play a file, control it, play an array, read metadata, decode to NumPy.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.2.1</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html" aria-current="page">Quickstart</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">02 · Start</p>
+<h1>Quickstart</h1>
+<p class="lead">Five recipes. Each one runs as written.</p>
+
+<h2 id="play">Play a file</h2>
+<pre data-lang=""><code>import sound_rs
+
+sound_rs.play_audio(&quot;music.mp3&quot;)</code></pre>
+<p><code>play_audio</code> blocks until the track ends and releases the GIL while it does, so
+other Python threads keep running. It opens the output device for that one call.</p>
+
+<h2 id="player">Play with controls</h2>
+<pre data-lang=""><code>import sound_rs
+
+with sound_rs.Player() as player:
+    player.play_file(&quot;music.flac&quot;)   # returns immediately
+    player.volume = 0.6
+    player.seek(30.0)                # jump to 0:30
+    player.pause()
+    player.resume()
+    player.wait()                    # block until it ends</code></pre>
+<p>The player keeps the stream open, so starting the next track costs milliseconds instead of
+reopening the device. Details in <a href="player.html">The player</a>.</p>
+
+<h2 id="arrays">Play a NumPy array</h2>
+<pre data-lang=""><code>import numpy as np
+import sound_rs
+
+rate = 44100
+t = np.arange(rate * 2) / rate
+mono = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+
+sound_rs.play_array(mono, rate)                       # 1D, mono
+sound_rs.play_array(np.stack([mono, mono]), rate)     # 2D, (channels, frames)</code></pre><div class="warn"><b>2D arrays are channels first</b>The shape is <code>(channels, frames)</code>, not <code>(frames, channels)</code>. Passing <code>(frames, 2)</code> silently plays the wrong thing — check the shape.</div>
+<h2 id="inspect">Inspect a file</h2>
+<pre data-lang=""><code>sample_rate, channels, duration = sound_rs.get_audio_info(&quot;music.m4a&quot;)
+print(sample_rate, channels, duration)   # 44100 2 213.4</code></pre>
+<p>This reads the container header — about 1 ms regardless of file length. It decodes one
+packet only for AAC, whose container does not record the channel count.</p>
+
+<h2 id="decode">Decode to NumPy</h2>
+<pre data-lang=""><code>import sound_rs
+
+audio, rate = sound_rs.load(&quot;music.flac&quot;)   # float32, (frames, channels)
+print(audio.shape, rate)</code></pre><div class="warn"><b>This puts the whole file in RAM</b>A 10-minute stereo FLAC becomes 211 MB. For playback use <code>Player.play_file</code>, which streams and stays under a few megabytes.</div>
+<h2 id="batch">Decode many files</h2>
+<pre data-lang=""><code>import sound_rs
+
+clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;, &quot;c.flac&quot;])   # all cores, GIL released
+for audio, rate in clips:
+    print(audio.shape, rate)</code></pre>
+<h2 id="devices">Choose a device</h2>
+<pre data-lang=""><code>import sound_rs
+
+for index, name, is_default in sound_rs.list_devices():
+    print((&quot;*&quot; if is_default else &quot; &quot;), index, name)
+
+sound_rs.play_audio(&quot;music.mp3&quot;, device=&quot;MacBook Pro Speakers&quot;)</code></pre>
+<p>Continue with <a href="player.html">The player</a>.</p>
+
+<div class="next"><a href="install.html">← Installation</a><a href="player.html">The player →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#play">Play a file</a><a href="#player">Play with controls</a><a href="#arrays">Play a NumPy array</a><a href="#inspect">Inspect a file</a><a href="#decode">Decode to NumPy</a><a href="#batch">Decode many files</a><a href="#devices">Choose a device</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.2.1 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>
