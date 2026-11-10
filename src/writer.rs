@@ -56,12 +56,7 @@ fn encode(sample: f32, subtype: Subtype, out: &mut Vec<u8>) {
 }
 
 /// Builds a complete WAV file in memory.
-pub(crate) fn wav_bytes(
-    samples: &[f32],
-    channels: u16,
-    rate: u32,
-    subtype: Subtype,
-) -> Vec<u8> {
+pub(crate) fn wav_bytes(samples: &[f32], channels: u16, rate: u32, subtype: Subtype) -> Vec<u8> {
     let channels = channels.max(1) as usize;
     let block_align = channels as u16 * subtype.bits() / 8;
     let byte_rate = rate * block_align as u32;
@@ -127,9 +122,7 @@ mod tests {
 
     #[test]
     fn pcm16_roundtrip_is_sample_exact() {
-        let samples: Vec<f32> = (0..4410)
-            .map(|i| ((i as f32) * 0.01).sin() * 0.5)
-            .collect();
+        let samples: Vec<f32> = (0..4410).map(|i| ((i as f32) * 0.01).sin() * 0.5).collect();
         let bytes = wav_bytes(&samples, 1, 44_100, Subtype::Pcm16);
         let audio = decoded(&bytes);
         assert_eq!(audio.channels, 1);
