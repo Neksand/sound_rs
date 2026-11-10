@@ -6,6 +6,8 @@
 <title>Changelog — sound_rs docs</title>
 <meta name="description" content="sound_rs release history: what changed in each version and where to find the full release notes.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/changelog.html">
+<link rel="alternate" type="text/markdown" href="changelog.html.md">
+<link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Changelog — sound_rs docs">
 <meta property="og:description" content="sound_rs release history: what changed in each version and where to find the full release notes.">
 <meta property="og:type" content="article">
@@ -16,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.2.2</span>
+  <span class="ver">v0.4.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -31,6 +33,17 @@
 <h1>Changelog</h1>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
+
+<h2 id="v040">0.4.0</h2>
+<p class="kicker">recording era — writing files</p>
+<ul>
+  <li><code>sound_rs.write(path, audio, rate, subtype=)</code> writes WAV in PCM16,
+      PCM24 or float32. Arrays are <code>(frames, channels)</code>, matching
+      <code>load</code>, so a load/write round-trip needs no transpose.</li>
+  <li><code>Recorder.record_to(path, seconds, subtype=)</code> records and saves in one call.</li>
+  <li>Non-contiguous arrays (<code>audio[:, 0]</code>) are accepted by <code>write</code> and
+      <code>play_array</code> instead of raising.</li>
+</ul>
 
 <h2 id="v032">0.3.2</h2>
 <p class="kicker">accuracy</p>
@@ -101,10 +114,10 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.2.2 — MIT</span>
+  <span>sound_rs v0.4.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

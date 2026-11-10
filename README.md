@@ -16,9 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.3.2](https://github.com/Neksand/sound_rs/releases/tag/v0.3.2) — accuracy
-fixes on top of [0.3.0](https://github.com/Neksand/sound_rs/releases/tag/v0.3.0) (reliability,
-datasets, recording, queues). Build report: [docs/reports/0.3.0-report.md](docs/reports/0.3.0-report.md).
+**Latest release:** [0.4.0](https://github.com/Neksand/sound_rs/releases/tag/v0.4.0) — the
+recording era begins: write WAV, record straight to a file. Guides for coding agents:
+[llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](AGENTS.md).
 
 ---
 
@@ -32,7 +32,9 @@ datasets, recording, queues). Build report: [docs/reports/0.3.0-report.md](docs/
 - **Decode to NumPy:** `load(path, sample_rate=, mono=, offset=, duration=)` — resample to
   16 kHz mono in one call, or decode only a window
 - **Parallel decode:** `load_many(paths, sample_rate=, mono=)` uses every core, GIL released
-- **Recording:** `Recorder()` captures from the microphone to a float32 array
+- **Recording:** `Recorder()` captures from the microphone; `record_to(path, seconds)`
+  saves a take in one call
+- **Writing:** `write(path, audio, rate, subtype=)` saves WAV as PCM16, PCM24 or float32
 - **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push
   samples from Python with backpressure
 - **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded
@@ -115,6 +117,21 @@ import sound_rs
 with sound_rs.Recorder() as recorder:
     audio, rate = recorder.record(5.0)     # float32, (frames, channels)
 ```
+
+### Write a file
+
+```python
+import sound_rs
+
+audio, rate = sound_rs.load("take.flac")          # (frames, channels)
+sound_rs.write("take.wav", audio, rate, subtype="pcm24")
+
+with sound_rs.Recorder() as recorder:
+    recorder.record_to("take.wav", 5.0)           # record and save
+```
+
+Arrays use `(frames, channels)` — the layout `load` returns — so a load/write round-trip
+needs no transpose.
 
 ### Queue and live input
 
@@ -250,8 +267,9 @@ What the numbers do not hide:
 | ✅ 6 | Recording | `Recorder`: microphone to float32 array |
 | ✅ 7 | Queues and live input | `enqueue`, `begin_feed`/`feed` |
 | ✅ 8 | Datasets | `load(..., sample_rate=16000, mono=True)`, parallel `load_many` |
-| 🔜 9 | Hot-swap on disconnect | Reopen automatically instead of raising `stalled` |
-| 🔜 10 | Effects | Basic gain/fade/mix utilities |
+| ✅ 9 | Writing files | `write`, `Recorder.record_to`, PCM16/PCM24/float32 WAV |
+| 🔜 10 | Hot-swap on disconnect | Reopen automatically instead of raising `stalled` |
+| 🔜 11 | Editing | Slice, join, gain, fade, normalize |
 
 ---
 
@@ -265,6 +283,7 @@ python tests/smoke.py           # end-to-end decode + API checks
 SOUND_RS_PLAY=1 python tests/smoke.py   # also plays (needs an audio device)
 python tests/decode_regression.py  # PCM hashes; must not change
 python docs/check_api.py        # every public name is documented
+python3 docs/_build.py          # docs site, llms.txt and .md pages
 python bench/run.py --compare --report bench/REPORT.md
 python3 docs/_build.py          # rebuild the documentation site
 ```

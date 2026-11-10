@@ -6,6 +6,8 @@
 <title>API reference — sound_rs docs</title>
 <meta name="description" content="Every function and method in sound_rs: signatures, arguments, return values, exceptions and a runnable example.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/api.html">
+<link rel="alternate" type="text/markdown" href="api.html.md">
+<link rel="describedby" href="llms.txt">
 <meta property="og:title" content="API reference — sound_rs docs">
 <meta property="og:description" content="Every function and method in sound_rs: signatures, arguments, return values, exceptions and a runnable example.">
 <meta property="og:type" content="article">
@@ -16,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.2.2</span>
+  <span class="ver">v0.4.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -102,6 +104,16 @@ output works at all.</p>
 returns an exit code. You do not call it from Python — see
 <a href="cli.html">Command line</a>.</p>
 
+<h2 id="write">write</h2>
+<pre data-lang=""><code>sound_rs.write(file_path: str, audio, sample_rate: int, subtype: str = &quot;pcm16&quot;) -&gt; None</code></pre>
+<p>Writes float32 audio to a WAV file. The array is <code>(frames,)</code> for mono or
+<code>(frames, channels)</code> — the same layout <code>load</code> returns, so
+<code>sound_rs.write(path, *sound_rs.load(src))</code> round-trips. Samples outside −1…1 are
+clipped. Subtypes: <code>pcm16</code>, <code>pcm24</code>, <code>float32</code>.</p>
+<p>Only <code>.wav</code> is accepted so far; any other extension raises
+<code>SoundRsError</code> with <code>code="usage"</code>. Returns nothing.</p>
+<pre data-lang=""><code>audio, rate = sound_rs.load(&quot;take.flac&quot;)
+sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;pcm24&quot;)</code></pre>
 <h2 id="load-bytes">load_bytes</h2>
 <pre data-lang=""><code>sound_rs.load_bytes(data: bytes) -&gt; tuple[numpy.ndarray, int]</code></pre>
 <p>Decodes audio that is already in memory. Same shape, rate and gapless trimming as
@@ -122,6 +134,7 @@ there is no microphone or the OS denies access.</p>
   <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
   <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
   <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
+  <tr><td class="num">record_to(path, seconds, subtype)</td><td>None</td><td>record and write a WAV in one call</td></tr>
   <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
 </table>
 
@@ -187,10 +200,10 @@ with sound_rs.Player() as player:
 
 <div class="next"><a href="migration.html">← Coming from another library</a><a href="benchmarks.html">Benchmarks →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#write">write</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.2.2 — MIT</span>
+  <span>sound_rs v0.4.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

@@ -6,6 +6,8 @@
 <title>Formats and gapless — sound_rs docs</title>
 <meta name="description" content="Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/formats.html">
+<link rel="alternate" type="text/markdown" href="formats.html.md">
+<link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Formats and gapless — sound_rs docs">
 <meta property="og:description" content="Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.">
 <meta property="og:type" content="article">
@@ -16,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.2.2</span>
+  <span class="ver">v0.4.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -89,7 +91,7 @@ sound_rs.get_audio_info(&quot;maybe.mp3&quot;)        # (rate, channels, seconds
   <aside class="toc"><h2>On this page</h2><a href="#supported">Supported formats</a><a href="#gapless">Gapless</a><a href="#depth">Bit depth</a><a href="#errors">When a file will not open</a><a href="#probe">Checking without decoding</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.2.2 — MIT</span>
+  <span>sound_rs v0.4.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

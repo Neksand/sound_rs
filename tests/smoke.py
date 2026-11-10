@@ -140,6 +140,29 @@ def main():
             bytes_audio.shape,
         )
 
+        # Writing: (frames, channels) round-trips through load().
+        out = os.path.join(tmp, "written.wav")
+        original, original_rate = sound_rs.load(stereo)
+        sound_rs.write(out, original, original_rate, subtype="pcm24")
+        written, written_rate = sound_rs.load(out)
+        assert written_rate == original_rate, (written_rate, original_rate)
+        assert written.shape == original.shape, (written.shape, original.shape)
+        assert np.abs(written - original).max() < 1e-5, "write/load round-trip drifted"
+        sound_rs.write(out, original[:, 0], original_rate)      # 1D mono
+        assert sound_rs.get_audio_info(out)[1] == 1
+        try:
+            sound_rs.write(os.path.join(tmp, "x.flac"), original, original_rate)
+        except sound_rs.SoundRsError as error:
+            assert error.code == "usage", error.code
+        else:
+            raise AssertionError("writing FLAC must fail with usage")
+        try:
+            sound_rs.write(out, original.astype("float64"), original_rate)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("float64 must be rejected")
+
         # mono folds every channel: 6ch mean equals the mono decode.
         six = os.path.join(FIX, "six.wav")
         folded, _ = sound_rs.load(six, mono=True)

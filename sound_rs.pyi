@@ -18,6 +18,7 @@ __all__ = [
     "load_many",
     "play_array",
     "play_audio",
+    "write",
     "play_sine_wave",
     "cli",
     "__version__",
@@ -45,6 +46,17 @@ def load(
 
     `sample_rate` resamples, `mono` folds to one channel, `offset` and
     `duration` (seconds) decode only that window.
+    """
+
+def write(
+    file_path: str,
+    audio: npt.NDArray[np.float32],
+    sample_rate: int,
+    subtype: str = "pcm16",
+) -> None:
+    """Write `(frames,)` or `(frames, channels)` float32 to a WAV file.
+
+    `subtype` is `pcm16`, `pcm24` or `float32`. Samples outside -1..1 are clipped.
     """
 
 def load_bytes(data: bytes) -> Tuple[npt.NDArray[np.float32], int]:
@@ -82,6 +94,9 @@ class Recorder:
     def start(self) -> None: ...
     def stop(self) -> Tuple[npt.NDArray[np.float32], int]: ...
     def record(self, seconds: float) -> Tuple[npt.NDArray[np.float32], int]: ...
+    def record_to(
+        self, path: str, seconds: float, subtype: str = "pcm16"
+    ) -> None: ...
 
 def list_devices() -> List[Tuple[int, str, bool]]:
     """Output devices as `(index, name, is_default)`."""

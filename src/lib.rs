@@ -8,6 +8,7 @@ mod audio;
 mod cli;
 mod player;
 mod recorder;
+mod writer;
 
 use player::Player;
 use pyo3::create_exception;
@@ -39,6 +40,86 @@ pub(crate) fn error(message: String) -> PyErr {
     error_with(code, message)
 }
 
+/// Extracts interleaved f32 samples from a 1D mono or 2D `(frames, channels)`
+/// array, the layout `load` returns.
+pub(crate) fn numpy_frames(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16)> {
+    #[cfg(feature = "numpy")]
+    {
+        use numpy::{PyArray1, PyArray2, PyArrayMethods};
+
+        if let Ok(array) = array.extract::<Bound<'_, PyArray1<f32>>>() {
+            // `as_slice` rejects non-contiguous views; iterating the ndarray
+            // view handles strides and copies, which is what callers expect.
+            let view = unsafe { array.as_array() };
+            return Ok((view.iter().copied().collect(), 1));
+        }
+
+        if let Ok(array) = array.extract::<Bound<'_, PyArray2<f32>>>() {
+            let view = unsafe { array.as_array() };
+            let (frames, channels) = view.dim();
+            let mut interleaved = Vec::with_capacity(frames * channels);
+            for frame in 0..frames {
+                for channel in 0..channels {
+                    interleaved.push(view[[frame, channel]]);
+                }
+            }
+            return Ok((interleaved, channels as u16));
+        }
+
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Expected a 1D or 2D float32 array with shape (frames,) or (frames, channels)",
+        ))
+    }
+
+    #[cfg(not(feature = "numpy"))]
+    {
+        let _ = array;
+        Err(error_with(
+            "unsupported",
+            "NumPy support not enabled. Build with the 'numpy' feature.".to_string(),
+        ))
+    }
+}
+
+/// Writes an array to a file. Shared by `write()` and `Recorder.record_to()`.
+pub(crate) fn write_array(
+    path: &str,
+    audio: &Bound<'_, PyAny>,
+    sample_rate: u32,
+    subtype: &str,
+) -> PyResult<()> {
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if extension != "wav" {
+        return Err(error_with(
+            "usage",
+            format!("Only .wav can be written so far (got '.{extension}')"),
+        ));
+    }
+    let format =
+        writer::Subtype::parse(Some(subtype)).map_err(|message| error_with("usage", message))?;
+    let (samples, channels) = numpy_frames(audio)?;
+    writer::write(path, &samples, channels, sample_rate, format).map_err(error)
+}
+
+/// Write audio to a WAV file. `audio` is `(frames,)` or `(frames, channels)`,
+/// the same layout `load` returns; `subtype` is `pcm16`, `pcm24` or `float32`.
+#[pyfunction]
+#[pyo3(signature = (file_path, audio, sample_rate, subtype="pcm16"))]
+fn write(
+    py: Python<'_>,
+    file_path: &str,
+    audio: Bound<'_, PyAny>,
+    sample_rate: u32,
+    subtype: &str,
+) -> PyResult<()> {
+    let _ = py;
+    write_array(file_path, &audio, sample_rate, subtype)
+}
+
 /// Extracts interleaved f32 samples from a 1D mono or 2D `(channels, frames)`
 /// numpy array, and the channel count that goes with them.
 pub(crate) fn numpy_samples(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16)> {
@@ -47,8 +128,10 @@ pub(crate) fn numpy_samples(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16
         use numpy::{PyArray1, PyArray2, PyArrayMethods};
 
         if let Ok(array) = array.extract::<Bound<'_, PyArray1<f32>>>() {
-            let samples = unsafe { array.as_slice()? };
-            return Ok((samples.to_vec(), 1));
+            // `as_slice` rejects non-contiguous views; iterating the ndarray
+            // view handles strides and copies, which is what callers expect.
+            let view = unsafe { array.as_array() };
+            return Ok((view.iter().copied().collect(), 1));
         }
 
         if let Ok(array) = array.extract::<Bound<'_, PyArray2<f32>>>() {
@@ -281,6 +364,7 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;
     m.add_function(wrap_pyfunction!(load, &m)?)?;
     m.add_function(wrap_pyfunction!(load_bytes, &m)?)?;
+    m.add_function(wrap_pyfunction!(write, &m)?)?;
     m.add_function(wrap_pyfunction!(load_many, &m)?)?;
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;

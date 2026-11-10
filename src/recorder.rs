@@ -233,6 +233,19 @@ impl Recorder {
         into_array(py, audio)
     }
 
+    /// Records for `seconds` and writes the take to a WAV file.
+    /// `subtype` is `pcm16`, `pcm24` or `float32`.
+    pub(crate) fn record_to(
+        &mut self,
+        py: Python<'_>,
+        path: &str,
+        seconds: f64,
+        subtype: &str,
+    ) -> PyResult<()> {
+        let (audio, rate) = self.record(py, seconds)?;
+        crate::write_array(path, &audio, rate, subtype)
+    }
+
     /// Records for `seconds` and returns `(array, sample_rate)`.
     pub(crate) fn record<'py>(
         &mut self,

@@ -39,6 +39,7 @@ with sound_rs.Player() as player:
   <li><strong>Streaming decode</strong>: a two-hour file never sits in RAM, and the first
       sound arrives in milliseconds instead of after a full decode.</li>
   <li><strong>Decoding to arrays</strong> for analysis, one file at a time or in parallel.</li>
+  <li><strong>Writing</strong> WAV in PCM16, PCM24 or float32; record straight to a file.</li>
   <li><strong>Metadata</strong> straight from the container header, without decoding the audio.</li>
   <li><strong>Typed</strong>: ships <code>sound_rs.pyi</code> and <code>py.typed</code>, so
       editors autocomplete every call.</li>
@@ -763,6 +764,20 @@ sound_rs.cli() -> int
 returns an exit code. You do not call it from Python — see
 <a href="cli.html">Command line</a>.</p>
 
+<h2 id="write">write</h2>
+""" + code("""
+sound_rs.write(file_path: str, audio, sample_rate: int, subtype: str = "pcm16") -> None
+""") + """
+<p>Writes float32 audio to a WAV file. The array is <code>(frames,)</code> for mono or
+<code>(frames, channels)</code> — the same layout <code>load</code> returns, so
+<code>sound_rs.write(path, *sound_rs.load(src))</code> round-trips. Samples outside −1…1 are
+clipped. Subtypes: <code>pcm16</code>, <code>pcm24</code>, <code>float32</code>.</p>
+<p>Only <code>.wav</code> is accepted so far; any other extension raises
+<code>SoundRsError</code> with <code>code="usage"</code>. Returns nothing.</p>
+""" + code("""
+audio, rate = sound_rs.load("take.flac")
+sound_rs.write("take.wav", audio, rate, subtype="pcm24")
+""") + """
 <h2 id="load-bytes">load_bytes</h2>
 """ + code("""
 sound_rs.load_bytes(data: bytes) -> tuple[numpy.ndarray, int]
@@ -789,6 +804,7 @@ there is no microphone or the OS denies access.</p>
   <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
   <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
   <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
+  <tr><td class="num">record_to(path, seconds, subtype)</td><td>None</td><td>record and write a WAV in one call</td></tr>
   <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
 </table>
 
@@ -1037,6 +1053,17 @@ page(
 <h1>Changelog</h1>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
+
+<h2 id="v040">0.4.0</h2>
+<p class="kicker">recording era — writing files</p>
+<ul>
+  <li><code>sound_rs.write(path, audio, rate, subtype=)</code> writes WAV in PCM16,
+      PCM24 or float32. Arrays are <code>(frames, channels)</code>, matching
+      <code>load</code>, so a load/write round-trip needs no transpose.</li>
+  <li><code>Recorder.record_to(path, seconds, subtype=)</code> records and saves in one call.</li>
+  <li>Non-contiguous arrays (<code>audio[:, 0]</code>) are accepted by <code>write</code> and
+      <code>play_array</code> instead of raising.</li>
+</ul>
 
 <h2 id="v032">0.3.2</h2>
 <p class="kicker">accuracy</p>
@@ -1355,6 +1382,22 @@ with wave.open("take.wav", "w") as handle:
         "raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no "
         "silent fallback.",
     ) + """
+<h2 id="save">Saving a take</h2>
+""" + code("""
+import sound_rs
+
+with sound_rs.Recorder() as recorder:
+    recorder.record_to("take.wav", 5.0, subtype="pcm24")
+""") + """
+<p>For anything else — resampling, trimming, writing a different name — record to an array
+and use <code>sound_rs.write</code>, which writes the same
+<code>(frames, channels)</code> layout that <code>load</code> returns.</p>
+""" + code("""
+import sound_rs
+
+audio, rate = sound_rs.Recorder().record(5.0)
+sound_rs.write("take.wav", audio, rate, subtype="float32")
+""") + """
 <h2 id="limits">Limits</h2>
 <ul>
   <li>The capture starts when the device delivers its first buffer. On Bluetooth headsets that

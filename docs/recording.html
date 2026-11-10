@@ -6,6 +6,8 @@
 <title>Recording — sound_rs docs</title>
 <meta name="description" content="Record from a microphone with sound_rs: input devices, start/stop, fixed-length captures, macOS permissions, and writing a WAV.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/recording.html">
+<link rel="alternate" type="text/markdown" href="recording.html.md">
+<link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Recording — sound_rs docs">
 <meta property="og:description" content="Record from a microphone with sound_rs: input devices, start/stop, fixed-length captures, macOS permissions, and writing a WAV.">
 <meta property="og:type" content="article">
@@ -16,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.2.2</span>
+  <span class="ver">v0.4.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -70,6 +72,18 @@ with wave.open(&quot;take.wav&quot;, &quot;w&quot;) as handle:
     handle.setsampwidth(2)
     handle.setframerate(rate)
     handle.writeframes(pcm.tobytes())</code></pre><div class="warn"><b>Microphone permission</b>macOS and Windows ask for microphone access the first time. A denied permission raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no silent fallback.</div>
+<h2 id="save">Saving a take</h2>
+<pre data-lang=""><code>import sound_rs
+
+with sound_rs.Recorder() as recorder:
+    recorder.record_to(&quot;take.wav&quot;, 5.0, subtype=&quot;pcm24&quot;)</code></pre>
+<p>For anything else — resampling, trimming, writing a different name — record to an array
+and use <code>sound_rs.write</code>, which writes the same
+<code>(frames, channels)</code> layout that <code>load</code> returns.</p>
+<pre data-lang=""><code>import sound_rs
+
+audio, rate = sound_rs.Recorder().record(5.0)
+sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;float32&quot;)</code></pre>
 <h2 id="limits">Limits</h2>
 <ul>
   <li>The capture starts when the device delivers its first buffer. On Bluetooth headsets that
@@ -84,10 +98,10 @@ with wave.open(&quot;take.wav&quot;, &quot;w&quot;) as handle:
 
 <div class="next"><a href="datasets.html">← Datasets and ML</a><a href="migration.html">Coming from another library →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#devices">Devices</a><a href="#start-stop">start and stop</a><a href="#wav">Writing a WAV</a><a href="#limits">Limits</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#devices">Devices</a><a href="#start-stop">start and stop</a><a href="#wav">Writing a WAV</a><a href="#save">Saving a take</a><a href="#limits">Limits</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.2.2 — MIT</span>
+  <span>sound_rs v0.4.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

@@ -6,6 +6,8 @@
 <title>Overview — sound_rs docs</title>
 <meta name="description" content="sound_rs plays and decodes MP3, FLAC, WAV, OGG and M4A in Python from one wheel, with no ffmpeg, constant memory and ~11 ms to first sound.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/index.html">
+<link rel="alternate" type="text/markdown" href="index.html.md">
+<link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Overview — sound_rs docs">
 <meta property="og:description" content="sound_rs plays and decodes MP3, FLAC, WAV, OGG and M4A in Python from one wheel, with no ffmpeg, constant memory and ~11 ms to first sound.">
 <meta property="og:type" content="article">
@@ -16,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.2.2</span>
+  <span class="ver">v0.4.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -54,6 +56,7 @@ with sound_rs.Player() as player:
   <li><strong>Streaming decode</strong>: a two-hour file never sits in RAM, and the first
       sound arrives in milliseconds instead of after a full decode.</li>
   <li><strong>Decoding to arrays</strong> for analysis, one file at a time or in parallel.</li>
+  <li><strong>Writing</strong> WAV in PCM16, PCM24 or float32; record straight to a file.</li>
   <li><strong>Metadata</strong> straight from the container header, without decoding the audio.</li>
   <li><strong>Typed</strong>: ships <code>sound_rs.pyi</code> and <code>py.typed</code>, so
       editors autocomplete every call.</li>
@@ -79,7 +82,7 @@ alternatives.</p>
   <aside class="toc"><h2>On this page</h2><a href="#what-it-does">What it does</a><a href="#what-it-does-not">What it does not do</a><a href="#next">Where to go next</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.2.2 — MIT</span>
+  <span>sound_rs v0.4.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

@@ -9,10 +9,19 @@ import html
 import json
 import os
 import re
+from html.parser import HTMLParser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SITE = "https://neksand.github.io/sound_rs/"
-VERSION = "0.2.2"
+def _version():
+    with open(os.path.join(HERE, "..", "Cargo.toml")) as handle:
+        for line in handle:
+            if line.startswith("version ="):
+                return line.split('"')[1]
+    return "unknown"
+
+
+VERSION = _version()
 REPO = "https://github.com/Neksand/sound_rs"
 PYPI = "https://pypi.org/project/sound-rs/"
 
@@ -467,6 +476,198 @@ JS = r"""
 })();
 """
 
+class _Markdown(HTMLParser):
+    """Converts the page body we generate into markdown an agent can read.
+
+    Only the tags this generator emits are handled; anything else is passed
+    through as text. Not a general HTML-to-markdown converter.
+    """
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.blocks = []
+        self.text = []
+        self.pre = None
+        self.pre_lang = ""
+        self.quote = False
+        self.list_depth = 0
+        self.table = None
+        self.row = None
+        self.cell = None
+        self.href = None
+        self.link = []
+
+    # -- helpers
+    def take(self):
+        value = re.sub(r"\s+", " ", "".join(self.text)).strip()
+        self.text = []
+        return value
+
+    def push(self, block):
+        if block:
+            self.blocks.append(block)
+
+    def inline(self, value):
+        if self.href is not None:
+            self.link.append(value)
+        else:
+            self.text.append(value)
+
+    # -- parser hooks
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in {"h1", "h2", "h3"}:
+            self.text = []
+            self._heading = int(tag[1])
+        elif tag == "p":
+            self.text = []
+            self.skip = attrs.get("class") == "kicker"
+        elif tag in {"ul", "ol"}:
+            self.list_depth += 1
+        elif tag == "li":
+            self.text = []
+        elif tag == "pre":
+            self.pre = []
+            self.pre_lang = attrs.get("data-lang", "")
+        elif tag == "code" and self.pre is None:
+            self.inline("`")
+        elif tag == "strong":
+            self.inline("**")
+        elif tag == "em":
+            self.inline("*")
+        elif tag == "a":
+            self.href = attrs.get("href", "")
+            self.link = []
+        elif tag == "div" and attrs.get("class") in {"note", "warn"}:
+            self.quote = True
+            self.text = []
+        elif tag == "table":
+            self.table = []
+        elif tag == "tr":
+            self.row = []
+        elif tag in {"th", "td"}:
+            self.cell = []
+        elif tag == "br" and self.cell is not None:
+            self.cell.append(" ")
+        elif tag == "hr":
+            self.push("---")
+
+    def handle_endtag(self, tag):
+        if tag in {"h1", "h2", "h3"}:
+            level = getattr(self, "_heading", 2)
+            self.push("#" * level + " " + self.take())
+        elif tag == "p":
+            body = self.take()
+            if getattr(self, "skip", False):
+                self.skip = False
+            elif self.quote:
+                self.push("> " + body)
+            else:
+                self.push(body)
+        elif tag in {"ul", "ol"}:
+            self.list_depth = max(0, self.list_depth - 1)
+        elif tag == "li":
+            self.push(("  " * max(0, self.list_depth - 1)) + "- " + self.take())
+        elif tag == "pre":
+            code = "".join(self.pre or []).strip("\n")
+            fence = "```" + self.pre_lang
+            self.push(fence + "\n" + code + "\n```")
+            self.pre = None
+            self.pre_lang = ""
+        elif tag == "code" and self.pre is None:
+            self.inline("`")
+        elif tag == "strong":
+            self.inline("**")
+        elif tag == "em":
+            self.inline("*")
+        elif tag == "a":
+            text = "[" + re.sub(r"\s+", " ", "".join(self.link)).strip() + "](" + (self.href or "") + ")"
+            self.href = None
+            self.link = []
+            if self.cell is not None:
+                self.cell.append(text)
+            elif self.pre is None:
+                self.text.append(text)
+        elif tag == "div" and self.quote:
+            self.quote = False
+        elif tag == "table":
+            rows = self.table or []
+            self.table = None
+            if rows:
+                width = max(len(r) for r in rows)
+                lines = []
+                for index, row in enumerate(rows):
+                    cells = [c.strip().replace("|", "\\|") for c in row]
+                    cells += [""] * (width - len(cells))
+                    lines.append("| " + " | ".join(cells) + " |")
+                    if index == 0:
+                        lines.append("|" + "|".join(["---"] * width) + "|")
+                self.push("\n".join(lines))
+        elif tag == "tr" and self.table is not None:
+            self.table.append(self.row or [])
+            self.row = None
+        elif tag in {"th", "td"} and self.cell is not None:
+            self.row = (self.row or [])
+            self.row.append(" ".join(self.cell).strip())
+            self.cell = None
+
+    def handle_data(self, data):
+        if self.pre is not None:
+            self.pre.append(data)
+        elif self.cell is not None:
+            self.cell.append(data)
+        else:
+            self.inline(data)
+
+    def document(self):
+        self.close()
+        return "\n\n".join(b for b in self.blocks if b).strip() + "\n"
+
+
+def to_markdown(body):
+    parser = _Markdown()
+    parser.feed(body)
+    return parser.document()
+
+
+def llms_txt(version):
+    lines = [
+        "# sound_rs",
+        "",
+        "> Fast Rust audio for Python: play, stream and record WAV, MP3, FLAC, OGG and M4A",
+        "> without ffmpeg, with constant memory and a typed API. Python 3.10+, wheels for Linux",
+        "> x86_64/aarch64, Windows amd64, macOS arm64/Intel.",
+        "",
+        f"Version {version}. Install with `pip install sound_rs`. Playback blocks and releases",
+        "the GIL; decoding returns float32 `(frames, channels)` arrays; every failure raises",
+        "`sound_rs.SoundRsError` with a `.code` of `io`, `format`, `device`, `stalled`,",
+        "`unsupported` or `usage`.",
+        "",
+        "Reading order for a coding task: Overview, Quickstart, then the guide for the job",
+        "(player, datasets, recording, writing, numpy, migration), then the API reference.",
+        "Skipping the guides and guessing the API is the most common way to get it wrong.",
+    ]
+    for section, items in NAV:
+        lines += ["", f"## {section}", ""]
+        for slug, label in items:
+            description = next(
+                (p["description"] for p in PAGES if p["slug"] == slug), ""
+            )
+            url = f"{SITE}{slug}.md"
+            lines.append(f"- [{label}]({url}): {description}")
+    lines += [
+        "",
+        "## Optional",
+        "",
+        f"- [Benchmarks]({SITE}benchmarks.html.md): methodology, full tables, and the rows",
+        "  where sound_rs loses",
+        f"- [Changelog]({SITE}changelog.html.md): what changed and when",
+        f"- [Guarantees]({SITE}guarantees.html.md): what is promised and what is not",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 NAV = [
     ("Start", [
         ("index.html", "Overview"),
@@ -571,6 +772,8 @@ def render():
 <title>{item["title"]} — sound_rs docs</title>
 <meta name="description" content="{html.escape(item["description"])}">
 <link rel="canonical" href="{SITE}{slug}">
+<link rel="alternate" type="text/markdown" href="{slug}.md">
+<link rel="describedby" href="llms.txt">
 <meta property="og:title" content="{item["title"]} — sound_rs docs">
 <meta property="og:description" content="{html.escape(item["description"])}">
 <meta property="og:type" content="article">
@@ -612,6 +815,11 @@ def render():
 """
         with open(os.path.join(HERE, slug), "w") as handle:
             handle.write(document)
+        markdown = to_markdown(item["body"])
+        if not markdown.startswith("# "):
+            markdown = f"# {item['title']}\n\n{item['description']}\n\n" + markdown
+        with open(os.path.join(HERE, slug + ".md"), "w") as handle:
+            handle.write(markdown)
 
     with open(os.path.join(HERE, "assets", "style.css"), "w") as handle:
         handle.write(CSS.strip() + "\n")
@@ -634,6 +842,9 @@ def render():
                 "headings": headings,
             }
         )
+    with open(os.path.join(HERE, "llms.txt"), "w") as handle:
+        handle.write(llms_txt(VERSION))
+
     with open(os.path.join(HERE, "search.json"), "w") as handle:
         json.dump(entries, handle, ensure_ascii=False, indent=0)
 
