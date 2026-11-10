@@ -162,7 +162,16 @@ fn mp4_priming(path: &str) -> Option<u64> {
         }
     };
 
-    for (kind, trak) in mp4_children(&moov) {
+    priming_from_moov(&moov)
+}
+
+/// Same edit-list read as `mp4_priming`, for bytes that are already in memory.
+fn mp4_priming_bytes(data: &[u8]) -> Option<u64> {
+    priming_from_moov(mp4_child(data, b"moov")?)
+}
+
+fn priming_from_moov(moov: &[u8]) -> Option<u64> {
+    for (kind, trak) in mp4_children(moov) {
         if kind != b"trak" {
             continue;
         }
@@ -401,7 +410,7 @@ pub(crate) fn decode_bytes(data: &[u8]) -> Result<Audio, String> {
             &MetadataOptions::default(),
         )
         .map_err(|e| format!("Unsupported or corrupt audio data: {e}"))?;
-    decode_format(probed.format, None, "audio data")
+    decode_format(probed.format, mp4_priming_bytes(data), "audio data")
 }
 
 fn decode_symphonia(path: &str) -> Result<Audio, String> {
@@ -1138,6 +1147,20 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         assert_eq!(priming, Some(1024));
+    }
+
+    #[test]
+    fn mp4_priming_reads_bytes() {
+        let Ok(data) = std::fs::read("tests/fixtures/tone.m4a") else {
+            return;
+        };
+        assert_eq!(mp4_priming_bytes(&data), Some(1024));
+        let audio = decode_bytes(&data).expect("m4a decodes from bytes");
+        assert_eq!(
+            audio.samples.len(),
+            11264 * 2,
+            "bytes decode must trim AAC priming like the file path"
+        );
     }
 
     #[test]

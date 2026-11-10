@@ -107,6 +107,8 @@ pub struct Recorder {
     input: Option<Input>,
     capture: Arc<Mutex<Capture>>,
     stream: Option<cpal::Stream>,
+    /// Frames the caller asked for in `record()`; extra callbacks are trimmed.
+    expected_frames: Option<usize>,
 }
 
 #[pymethods]
@@ -126,6 +128,7 @@ impl Recorder {
             input: Some(input),
             capture,
             stream: None,
+            expected_frames: None,
         })
     }
 
@@ -215,11 +218,12 @@ impl Recorder {
                     "Recording exceeded the 230 MB buffer; drain it more often".to_string(),
                 ));
             }
-            (
-                std::mem::take(&mut capture.data),
-                input.channels,
-                input.rate,
-            )
+            let mut samples = std::mem::take(&mut capture.data);
+            if let Some(frames) = self.expected_frames.take() {
+                let want = frames.saturating_mul(input.channels as usize);
+                samples.truncate(want);
+            }
+            (samples, input.channels, input.rate)
         };
         let audio = crate::audio::Audio {
             sample_rate: rate,
@@ -241,8 +245,12 @@ impl Recorder {
                 "record() needs a finite number of seconds".to_string(),
             ));
         }
+        let seconds = seconds.clamp(0.0, 3600.0);
         self.start()?;
-        let wait = Duration::from_secs_f64(seconds.clamp(0.0, 3600.0));
+        if let Some(input) = &self.input {
+            self.expected_frames = Some((seconds * input.rate as f64).round() as usize);
+        }
+        let wait = Duration::from_secs_f64(seconds);
         py.allow_threads(|| std::thread::sleep(wait));
         self.stop(py)
     }

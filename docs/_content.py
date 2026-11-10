@@ -767,9 +767,9 @@ returns an exit code. You do not call it from Python — see
 """ + code("""
 sound_rs.load_bytes(data: bytes) -> tuple[numpy.ndarray, int]
 """) + """
-<p>Decodes audio that is already in memory. Same shape and rate as <code>load</code>. MP4
-priming cannot be read without a path, so AAC decoded this way may start a few milliseconds
-early. Corrupt data raises <code>SoundRsError</code> with <code>code="format"</code>.</p>
+<p>Decodes audio that is already in memory. Same shape, rate and gapless trimming as
+<code>load</code>; the MP4 edit list is read from the buffer as well. Corrupt data raises
+<code>SoundRsError</code> with <code>code="format"</code>.</p>
 
 <h2 id="list-devices">list_devices</h2>
 """ + code("""
@@ -1038,6 +1038,31 @@ page(
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
+<h2 id="v032">0.3.2</h2>
+<p class="kicker">accuracy</p>
+<ul>
+  <li><code>load_bytes</code> trims AAC priming too: the MP4 edit list is read from the
+      buffer, so bytes decode to the same frame count as a file.</li>
+  <li><code>record(seconds)</code> never returns more than the requested frames; the extra
+      device buffer at the end is cut.</li>
+</ul>
+
+<h2 id="v031">0.3.1</h2>
+<p class="kicker">documentation</p>
+<ul>
+  <li>PyPI carries the corrected README: roadmap, and one figure for time-to-first-sound.</li>
+</ul>
+
+<h2 id="v030">0.3.0</h2>
+<p class="kicker">reliability, datasets, recording</p>
+<ul>
+  <li>Stable error codes, mutation fuzzing, deterministic decode hashes, underrun and
+      latency reporting.</li>
+  <li><code>load(..., sample_rate, mono, offset, duration)</code>, <code>load_bytes</code>,
+      <code>Recorder</code>, <code>Player.enqueue</code>, <code>begin_feed/feed</code>.</li>
+  <li>Benchmark harness v2 and abi3 wheels for five platforms.</li>
+</ul>
+
 <h2 id="v022">0.2.2</h2>
 <p class="kicker">command line</p>
 <ul>
@@ -1059,7 +1084,7 @@ page(
 <p class="kicker">streaming player</p>
 <ul>
   <li><code>Player</code> with play, pause, resume, stop, seek, volume, position, duration.</li>
-  <li>Streaming decode: constant memory, ~9 ms to first sound on a 10-minute file.</li>
+  <li>Streaming decode: constant memory, ~11 ms to first sound on a 10-minute file.</li>
   <li>rubato resampler replaces linear interpolation; downsampling no longer aliases.</li>
   <li>MP3 decoded with minimp3 (1.1× faster than libsndfile, previously slower).</li>
   <li><code>load_many</code>, <code>list_devices</code>, device selection, typed stubs,
@@ -1332,6 +1357,9 @@ with wave.open("take.wav", "w") as handle:
     ) + """
 <h2 id="limits">Limits</h2>
 <ul>
+  <li>The capture starts when the device delivers its first buffer. On Bluetooth headsets that
+      is 100–150 ms, so a short take can be that much shorter than requested — the recorder
+      never adds frames to hide it.</li>
   <li>Captured samples are held in memory: the buffer caps at 230 M samples (~40 minutes of
       48 kHz stereo). Past that the recorder raises instead of exhausting RAM.</li>
   <li>No resampling, mixing or effects on input — capture is raw device audio.</li>

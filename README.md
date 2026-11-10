@@ -16,8 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.3.0](https://github.com/Neksand/sound_rs/releases/tag/v0.3.0) — reliability,
-datasets, recording, queues. Build report: [docs/reports/0.3.0-report.md](docs/reports/0.3.0-report.md).
+**Latest release:** [0.3.2](https://github.com/Neksand/sound_rs/releases/tag/v0.3.2) — accuracy
+fixes on top of [0.3.0](https://github.com/Neksand/sound_rs/releases/tag/v0.3.0) (reliability,
+datasets, recording, queues). Build report: [docs/reports/0.3.0-report.md](docs/reports/0.3.0-report.md).
 
 ---
 

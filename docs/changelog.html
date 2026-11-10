@@ -32,6 +32,31 @@
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
+<h2 id="v032">0.3.2</h2>
+<p class="kicker">accuracy</p>
+<ul>
+  <li><code>load_bytes</code> trims AAC priming too: the MP4 edit list is read from the
+      buffer, so bytes decode to the same frame count as a file.</li>
+  <li><code>record(seconds)</code> never returns more than the requested frames; the extra
+      device buffer at the end is cut.</li>
+</ul>
+
+<h2 id="v031">0.3.1</h2>
+<p class="kicker">documentation</p>
+<ul>
+  <li>PyPI carries the corrected README: roadmap, and one figure for time-to-first-sound.</li>
+</ul>
+
+<h2 id="v030">0.3.0</h2>
+<p class="kicker">reliability, datasets, recording</p>
+<ul>
+  <li>Stable error codes, mutation fuzzing, deterministic decode hashes, underrun and
+      latency reporting.</li>
+  <li><code>load(..., sample_rate, mono, offset, duration)</code>, <code>load_bytes</code>,
+      <code>Recorder</code>, <code>Player.enqueue</code>, <code>begin_feed/feed</code>.</li>
+  <li>Benchmark harness v2 and abi3 wheels for five platforms.</li>
+</ul>
+
 <h2 id="v022">0.2.2</h2>
 <p class="kicker">command line</p>
 <ul>
@@ -53,7 +78,7 @@
 <p class="kicker">streaming player</p>
 <ul>
   <li><code>Player</code> with play, pause, resume, stop, seek, volume, position, duration.</li>
-  <li>Streaming decode: constant memory, ~9 ms to first sound on a 10-minute file.</li>
+  <li>Streaming decode: constant memory, ~11 ms to first sound on a 10-minute file.</li>
   <li>rubato resampler replaces linear interpolation; downsampling no longer aliases.</li>
   <li>MP3 decoded with minimp3 (1.1× faster than libsndfile, previously slower).</li>
   <li><code>load_many</code>, <code>list_devices</code>, device selection, typed stubs,
@@ -76,7 +101,7 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.2.2 — MIT</span>

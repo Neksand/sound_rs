@@ -72,6 +72,9 @@ with wave.open(&quot;take.wav&quot;, &quot;w&quot;) as handle:
     handle.writeframes(pcm.tobytes())</code></pre><div class="warn"><b>Microphone permission</b>macOS and Windows ask for microphone access the first time. A denied permission raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no silent fallback.</div>
 <h2 id="limits">Limits</h2>
 <ul>
+  <li>The capture starts when the device delivers its first buffer. On Bluetooth headsets that
+      is 100–150 ms, so a short take can be that much shorter than requested — the recorder
+      never adds frames to hide it.</li>
   <li>Captured samples are held in memory: the buffer caps at 230 M samples (~40 minutes of
       48 kHz stereo). Past that the recorder raises instead of exhausting RAM.</li>
   <li>No resampling, mixing or effects on input — capture is raw device audio.</li>

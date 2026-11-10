@@ -131,6 +131,15 @@ def main():
         empty, _ = sound_rs.load(stereo, duration=0.0)
         assert empty.shape == (0, 2), empty.shape
 
+        # Bytes decode must keep the gapless trim, AAC included.
+        m4a = os.path.join(FIX, "tone.m4a")
+        file_audio, _ = sound_rs.load(m4a)
+        bytes_audio, _ = sound_rs.load_bytes(open(m4a, "rb").read())
+        assert file_audio.shape == bytes_audio.shape, (
+            file_audio.shape,
+            bytes_audio.shape,
+        )
+
         # mono folds every channel: 6ch mean equals the mono decode.
         six = os.path.join(FIX, "six.wav")
         folded, _ = sound_rs.load(six, mono=True)
@@ -244,6 +253,17 @@ def main():
             assert error.code == "usage", error.code
         else:
             raise AssertionError("feed() after stop() must raise")
+
+        # Recording returns exactly the frames that were asked for.
+        try:
+            recorder = sound_rs.Recorder()
+            take, take_rate = recorder.record(1.0)
+            wanted = round(1.0 * take_rate)
+            # Never more than asked; a slow device (Bluetooth) may start late.
+            assert take.shape[0] <= wanted + 1, (take.shape, wanted)
+            assert take.shape[0] > wanted * 0.7, (take.shape, wanted)
+        except sound_rs.SoundRsError:
+            pass  # no microphone in this environment
 
         # Soak: 100 cycles must not leak, and a healthy device must not report
         # underruns after the first start-ups.

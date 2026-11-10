@@ -104,9 +104,9 @@ returns an exit code. You do not call it from Python — see
 
 <h2 id="load-bytes">load_bytes</h2>
 <pre data-lang=""><code>sound_rs.load_bytes(data: bytes) -&gt; tuple[numpy.ndarray, int]</code></pre>
-<p>Decodes audio that is already in memory. Same shape and rate as <code>load</code>. MP4
-priming cannot be read without a path, so AAC decoded this way may start a few milliseconds
-early. Corrupt data raises <code>SoundRsError</code> with <code>code="format"</code>.</p>
+<p>Decodes audio that is already in memory. Same shape, rate and gapless trimming as
+<code>load</code>; the MP4 edit list is read from the buffer as well. Corrupt data raises
+<code>SoundRsError</code> with <code>code="format"</code>.</p>
 
 <h2 id="list-devices">list_devices</h2>
 <pre data-lang=""><code>sound_rs.list_devices() -&gt; list[tuple[int, str, bool]]</code></pre>
