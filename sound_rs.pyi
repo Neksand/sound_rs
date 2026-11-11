@@ -24,7 +24,8 @@ __all__ = [
     "__version__",
 ]
 
-class SoundRsError(RuntimeError): ...
+class SoundRsError(RuntimeError):
+    code: str
 
 def play_audio(file_path: str, device: Optional[str] = None) -> None:
     """Play a file, blocking until it ends. Releases the GIL while playing."""
@@ -45,7 +46,8 @@ def load(
     """Decode to a float32 array of shape `(frames, channels)` and its rate.
 
     `sample_rate` resamples, `mono` folds to one channel, `offset` and
-    `duration` (seconds) decode only that window.
+    `duration` (seconds) decode only that window. Times must be finite and
+    non-negative; a requested sample rate must be positive.
     """
 
 def write(
@@ -57,6 +59,8 @@ def write(
     """Write `(frames,)` or `(frames, channels)` float32 to a WAV file.
 
     `subtype` is `pcm16`, `pcm24` or `float32`. Samples outside -1..1 are clipped.
+    Non-finite samples and invalid WAV dimensions raise SoundRsError(code="usage").
+    File failures use code="io". Encoding and disk I/O release the GIL.
     """
 
 def load_bytes(data: bytes) -> Tuple[npt.NDArray[np.float32], int]:

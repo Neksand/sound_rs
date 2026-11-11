@@ -64,14 +64,15 @@ pub(crate) fn probe_info(path: &str) -> Result<TrackInfo, String> {
 
 /// Samples to reserve up front: the whole file for short clips, at most a
 /// minute for long ones so a two-hour lossless file does not reserve gigabytes
-/// before the first packet is decoded.
+/// before the first packet is decoded. The absolute 32 MiB ceiling also bounds
+/// reservations when the header's sample rate or channel count is corrupt.
 fn prealloc_capacity(frames: Option<u64>, channels: Option<u16>, rate: Option<u32>) -> usize {
     let (Some(frames), Some(channels)) = (frames, channels) else {
         return 0;
     };
     let rate = rate.unwrap_or(48_000) as u64;
     let wanted = frames.saturating_mul(channels as u64);
-    let cap = wanted.min(rate * channels as u64 * 60);
+    let cap = wanted.min(rate * channels as u64 * 60).min(8 * 1024 * 1024);
     usize::try_from(cap).unwrap_or(0)
 }
 
@@ -80,7 +81,7 @@ fn prealloc_capacity(frames: Option<u64>, channels: Option<u16>, rate: Option<u3
 fn mp4_children(data: &[u8]) -> Vec<(&[u8; 4], &[u8])> {
     let mut children = Vec::new();
     let mut offset = 0usize;
-    while offset + 8 <= data.len() {
+    while data.len() - offset >= 8 {
         let size = u32::from_be_bytes([
             data[offset],
             data[offset + 1],
@@ -90,16 +91,21 @@ fn mp4_children(data: &[u8]) -> Vec<(&[u8; 4], &[u8])> {
         let kind: &[u8; 4] = data[offset + 4..offset + 8].try_into().unwrap();
         let (header, size) = match size {
             1 => {
-                if offset + 16 > data.len() {
+                if data.len() - offset < 16 {
                     break;
                 }
                 let large = u64::from_be_bytes(data[offset + 8..offset + 16].try_into().unwrap());
-                (16usize, usize::try_from(large).unwrap_or(usize::MAX))
+                let Ok(size) = usize::try_from(large) else {
+                    break;
+                };
+                (16usize, size)
             }
             0 => (8usize, data.len() - offset),
             size => (8usize, size),
         };
-        if size < header || offset + size > data.len() {
+        // Compare against the remaining length before adding an untrusted
+        // extended size to the offset; the addition itself can overflow.
+        if size < header || size > data.len() - offset {
             break;
         }
         children.push((kind, &data[offset + header..offset + size]));
@@ -129,7 +135,7 @@ fn mp4_priming(path: &str) -> Option<u64> {
     let moov = {
         let mut offset = 0u64;
         loop {
-            if offset + 8 > total {
+            if total - offset < 8 {
                 return None;
             }
             file.seek(SeekFrom::Start(offset)).ok()?;
@@ -145,7 +151,7 @@ fn mp4_priming(path: &str) -> Option<u64> {
             } else if size == 0 {
                 size = total - offset;
             }
-            if size < header_len {
+            if size < header_len || size > total - offset {
                 return None;
             }
             if &kind == b"moov" {
@@ -1098,6 +1104,12 @@ mod tests {
             prealloc_capacity(Some(u64::MAX), Some(2), Some(44_100)),
             44_100 * 2 * 60
         );
+        // A time limit alone trusts the declared sample rate and channel
+        // count, allowing corrupt metadata to reserve terabytes up front.
+        assert_eq!(
+            prealloc_capacity(Some(u64::MAX), Some(u16::MAX), Some(u32::MAX)),
+            8 * 1024 * 1024
+        );
     }
 
     #[test]
@@ -1171,6 +1183,59 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(priming, None);
         assert!(!is_mp4("/nonexistent"), "missing files are not mp4");
+    }
+
+    #[test]
+    fn mp4_children_reject_extended_sizes_larger_than_the_remaining_buffer() {
+        let mut bytes = Vec::new();
+        bytes.extend(8u32.to_be_bytes());
+        bytes.extend(b"free");
+        bytes.extend(1u32.to_be_bytes());
+        bytes.extend(b"moov");
+        bytes.extend(u64::MAX.to_be_bytes());
+        let children = mp4_children(&bytes);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0], (b"free", &[][..]));
+        assert_eq!(mp4_priming_bytes(&bytes), None);
+    }
+
+    #[test]
+    fn mp4_file_scan_rejects_extended_size_overflow() {
+        let mut bytes = Vec::new();
+        bytes.extend(8u32.to_be_bytes());
+        bytes.extend(b"ftyp");
+        bytes.extend(1u32.to_be_bytes());
+        bytes.extend(b"free");
+        bytes.extend(u64::MAX.to_be_bytes());
+        let path =
+            std::env::temp_dir().join(format!("sound_rs_extended_size_{}.m4a", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        let result = std::panic::catch_unwind(|| mp4_priming(path.to_str().unwrap()));
+        std::fs::remove_file(path).ok();
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn mp4_children_validate_box_boundaries() {
+        for size in [2u64, 8, 15, 17, u64::MAX] {
+            let mut bytes = Vec::new();
+            bytes.extend(1u32.to_be_bytes());
+            bytes.extend(b"moov");
+            bytes.extend(size.to_be_bytes());
+            assert!(mp4_children(&bytes).is_empty(), "invalid size {size}");
+        }
+        let mut valid = Vec::new();
+        valid.extend(1u32.to_be_bytes());
+        valid.extend(b"free");
+        valid.extend(16u64.to_be_bytes());
+        valid.extend(0u32.to_be_bytes());
+        valid.extend(b"moov");
+        valid.extend(b"payload");
+        assert_eq!(
+            mp4_children(&valid),
+            vec![(b"free", &[][..]), (b"moov", &b"payload"[..])]
+        );
+        assert!(mp4_children(&valid[..15]).is_empty());
     }
 
     #[test]

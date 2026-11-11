@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +49,7 @@ jobs:
       - run: pip install --no-deps dist/*.whl
       - run: python tests/smoke.py
       - run: python tests/decode_regression.py
+      - run: python -m unittest discover -s tests -p "test_*.py" -v
       - run: python docs/check_api.py
       - run: python bench/test_stats.py
 

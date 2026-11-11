@@ -6,8 +6,8 @@
 
 use pyo3::prelude::*;
 
+use crate::audio;
 use crate::player::Player;
-use crate::{audio, error};
 
 pub(crate) const DOCS: &str = "https://neksand.github.io/sound_rs/";
 const SOURCE: &str = "https://github.com/Neksand/sound_rs";
@@ -84,11 +84,11 @@ pub(crate) fn parse(args: &[String]) -> Command {
                         None => return Command::Fail("--device needs a name".to_string()),
                     },
                     "--volume" => match args.get(index + 1).map(|v| v.parse::<f32>()) {
-                        Some(Ok(value)) => {
+                        Some(Ok(value)) if value.is_finite() => {
                             volume = value.clamp(0.0, 4.0);
                             index += 2;
                         }
-                        _ => return Command::Fail("--volume needs a number".to_string()),
+                        _ => return Command::Fail("--volume needs a finite number".to_string()),
                     },
                     other => return Command::Fail(format!("unknown option '{other}'")),
                 }
@@ -143,7 +143,7 @@ fn run(py: Python<'_>, command: Command) -> i32 {
             }
             Err(message) => fail(message),
         },
-        Command::Info(path) => match audio::info_or_decode(&path) {
+        Command::Info(path) => match py.allow_threads(|| audio::info_or_decode(&path)) {
             Ok((rate, channels, seconds)) => {
                 println!("file         {path}");
                 println!("sample rate  {rate} Hz");
@@ -193,12 +193,6 @@ fn clock(seconds: f32) -> String {
     let minutes = tenths / 600;
     let rest = (tenths % 600) as f32 / 10.0;
     format!("{minutes}:{rest:04.1}")
-}
-
-/// Keeps the `error` import used when the module is built without the CLI.
-#[allow(dead_code)]
-fn unused() -> PyErr {
-    error(String::new())
 }
 
 #[cfg(test)]
@@ -257,6 +251,9 @@ mod tests {
         for bad in [
             args(&["play"]),
             args(&["play", "a.flac", "--volume"]),
+            args(&["play", "a.flac", "--volume", "NaN"]),
+            args(&["play", "a.flac", "--volume", "inf"]),
+            args(&["play", "a.flac", "--volume", "-inf"]),
             args(&["play", "a.flac", "--nope"]),
             args(&["sing"]),
             args(&["info"]),

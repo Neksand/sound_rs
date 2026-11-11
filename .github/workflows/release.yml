@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         # abi3-py310: one wheel per platform covers Python 3.10 to 3.14.
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-14, macos-15-intel]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15, macos-15-intel]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -4,16 +4,16 @@ A library is trustworthy when its promises are written down and tested. This is 
 
 ## Errors
 
-Every failure is `sound_rs.SoundRsError` (a `RuntimeError`) with a stable `.code`:
+Library failures use `sound_rs.SoundRsError` (a `RuntimeError`) with a stable `.code`. Python argument conversion can raise `TypeError` or `OverflowError`; float64 arrays are rejected rather than silently converted.
 
 | Code | Meaning |
 |---|---|
-| io | The file could not be opened or read. |
+| io | The file could not be opened, read or written. |
 | format | The container or codec was not understood, or no audio was decodable. |
 | device | No output/input device, or the device refused to open. |
 | stalled | Playback made no progress for two seconds; the device probably disappeared. |
 | unsupported | The build lacks a feature (NumPy) or hit a documented limit. |
-| usage | The call order was wrong, for example  feed()  before  begin_feed() . |
+| usage | Invalid values, WAV dimensions or call order, for example  feed()  before  begin_feed() . |
 
 Codes are part of the API: renaming one is a breaking change.
 

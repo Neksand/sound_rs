@@ -31,14 +31,15 @@
 
 <p class="kicker">09 · Reference</p>
 <h1>API reference</h1>
-<p class="lead">Nine functions, one class. Everything raises <code>sound_rs.SoundRsError</code>,
-a subclass of <code>RuntimeError</code>, on failure.</p>
+<p class="lead">Playback, recording, decoding and WAV writing. Library failures raise
+<code>sound_rs.SoundRsError</code>, a subclass of <code>RuntimeError</code>, with a stable
+<code>.code</code>. Invalid Python argument types can raise <code>TypeError</code>.</p>
 
 <h2 id="module">Module</h2>
 <p><code class="num">sound_rs.__version__</code> — the installed version as a string, for example
 <code class="num">"0.2.1"</code>.</p>
-<p><code>class sound_rs.SoundRsError(RuntimeError)</code> — the only exception type the library
-raises. Catch it instead of the individual causes.</p>
+<p><code>class sound_rs.SoundRsError(RuntimeError)</code> carries a stable
+<code>code: str</code> describing the failure; see <a href="guarantees.html#errors">error codes</a>.</p>
 
 <h2 id="play-audio">play_audio</h2>
 <pre data-lang=""><code>sound_rs.play_audio(file_path: str, device: str | None = None) -&gt; None</code></pre>
@@ -71,19 +72,27 @@ decoded to learn it (~0.15 ms).</p>
 in that case the file is decoded to measure it.</p>
 
 <h2 id="load">load</h2>
-<pre data-lang=""><code>sound_rs.load(file_path: str) -&gt; tuple[numpy.ndarray, int]</code></pre>
+<pre data-lang=""><code>sound_rs.load(file_path: str, sample_rate: int | None = None, mono: bool = False,
+              offset: float = 0.0, duration: float | None = None)
+    -&gt; tuple[numpy.ndarray, int]</code></pre>
 <p>Decodes the whole file to float32 with shape <code>(frames, channels)</code>, and returns it
 with the sample rate. Requires NumPy. Peak memory is the decoded audio: 10 minutes of stereo
 is 211 MB.</p>
 <p>Raises <code>SoundRsError</code> for an unreadable file or when the build has no NumPy
 support.</p>
+<p><code>offset</code> and <code>duration</code> are finite, non-negative seconds.
+<code>duration=0</code> returns an empty array. A requested <code>sample_rate</code> must be
+positive; invalid options raise <code>SoundRsError(code="usage")</code> before file access.
+<code>mono=True</code> averages channels before resampling.</p>
 
 <h2 id="load-many">load_many</h2>
-<pre data-lang=""><code>sound_rs.load_many(paths: Sequence[str], threads: int | None = None)
+<pre data-lang=""><code>sound_rs.load_many(paths: Sequence[str], threads: int | None = None,
+                   sample_rate: int | None = None, mono: bool = False)
     -&gt; list[tuple[numpy.ndarray, int]]</code></pre>
 <p>Decodes in parallel with a Rayon pool, releasing the GIL. Order matches <code>paths</code>.
-<code>threads=None</code> uses one worker per core. The first file that fails raises, and the
-rest of the batch is abandoned.</p>
+<code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. All files
+are processed, then the first failure in input order is raised. A requested sample rate must
+be positive, including for an empty batch.</p>
 <pre data-lang=""><code>clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;], threads=2)</code></pre>
 <h2 id="play-array">play_array</h2>
 <pre data-lang=""><code>sound_rs.play_array(array: numpy.ndarray, sample_rate: int) -&gt; None</code></pre>
@@ -96,7 +105,8 @@ until playback ends.</p>
 <h2 id="play-sine-wave">play_sine_wave</h2>
 <pre data-lang=""><code>sound_rs.play_sine_wave(frequency: float, duration: float, sample_rate: int) -&gt; None</code></pre>
 <p>Generates a mono sine tone at half scale and plays it. Useful for checking that audio
-output works at all.</p>
+output works at all. Frequency and duration must be finite and non-negative, and the sample
+rate positive; invalid values raise <code>SoundRsError(code="usage")</code> before a device opens.</p>
 <pre data-lang=""><code>sound_rs.play_sine_wave(440.0, 1.0, 44100)</code></pre>
 <h2 id="cli">cli</h2>
 <pre data-lang=""><code>sound_rs.cli() -&gt; int</code></pre>
@@ -112,12 +122,18 @@ returns an exit code. You do not call it from Python — see
 clipped. Subtypes: <code>pcm16</code>, <code>pcm24</code>, <code>float32</code>.</p>
 <p>Only <code>.wav</code> is accepted so far; any other extension raises
 <code>SoundRsError</code> with <code>code="usage"</code>. Returns nothing.</p>
+<p>The sample rate and channel count must be positive and fit the WAV header. NaN and
+infinity, incomplete frames, and files too large for classic RIFF are rejected with
+<code>code="usage"</code> before opening the destination. A file-write failure has
+<code>code="io"</code>. Encoding and disk I/O release the GIL after copying the array.
+Read-only and strided float32 arrays are accepted; float64 remains a <code>TypeError</code>.</p>
 <pre data-lang=""><code>audio, rate = sound_rs.load(&quot;take.flac&quot;)
 sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;pcm24&quot;)</code></pre>
 <h2 id="load-bytes">load_bytes</h2>
 <pre data-lang=""><code>sound_rs.load_bytes(data: bytes) -&gt; tuple[numpy.ndarray, int]</code></pre>
-<p>Decodes audio that is already in memory. Same shape, rate and gapless trimming as
-<code>load</code>; the MP4 edit list is read from the buffer as well. Corrupt data raises
+<p>Decodes audio that is already in memory with the same array layout as <code>load</code>;
+the MP4 edit list is read from the buffer as well. MP3 bytes use Symphonia, while full-file
+MP3 loads use minimp3, so their samples and alignment can differ. Corrupt data raises
 <code>SoundRsError</code> with <code>code="format"</code>.</p>
 
 <h2 id="list-devices">list_devices</h2>

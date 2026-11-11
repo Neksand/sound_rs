@@ -35,6 +35,7 @@ recording era begins: write WAV, record straight to a file. Guides for coding ag
 - **Recording:** `Recorder()` captures from the microphone; `record_to(path, seconds)`
   saves a take in one call
 - **Writing:** `write(path, audio, rate, subtype=)` saves WAV as PCM16, PCM24 or float32
+  with validated header sizes and finite samples; encoding and writing release the GIL
 - **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push
   samples from Python with backpressure
 - **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded
@@ -280,6 +281,7 @@ cargo test                      # decode, gapless, seek, fuzzing, properties, pl
 cargo clippy --all-targets -- -D warnings
 maturin develop --release       # build into your venv
 python tests/smoke.py           # end-to-end decode + API checks
+python tests/test_validation.py # invalid inputs, WAV boundaries, NumPy layouts, GIL
 SOUND_RS_PLAY=1 python tests/smoke.py   # also plays (needs an audio device)
 python tests/decode_regression.py  # PCM hashes; must not change
 python docs/check_api.py        # every public name is documented

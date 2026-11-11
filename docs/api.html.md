@@ -1,12 +1,12 @@
 # API reference
 
-Nine functions, one class. Everything raises `sound_rs.SoundRsError`, a subclass of `RuntimeError`, on failure.
+Playback, recording, decoding and WAV writing. Library failures raise `sound_rs.SoundRsError`, a subclass of `RuntimeError`, with a stable `.code`. Invalid Python argument types can raise `TypeError`.
 
 ## Module
 
 `sound_rs.__version__` — the installed version as a string, for example `"0.2.1"`.
 
-`class sound_rs.SoundRsError(RuntimeError)` — the only exception type the library raises. Catch it instead of the individual causes.
+`class sound_rs.SoundRsError(RuntimeError)` carries a stable `code: str` describing the failure; see [error codes](guarantees.html#errors).
 
 ## play_audio
 
@@ -50,21 +50,26 @@ Duration is `None` in the Python sense only when the header has no frame count; 
 ## load
 
 ```
-sound_rs.load(file_path: str) -> tuple[numpy.ndarray, int]
+sound_rs.load(file_path: str, sample_rate: int | None = None, mono: bool = False,
+              offset: float = 0.0, duration: float | None = None)
+    -> tuple[numpy.ndarray, int]
 ```
 
 Decodes the whole file to float32 with shape `(frames, channels)`, and returns it with the sample rate. Requires NumPy. Peak memory is the decoded audio: 10 minutes of stereo is 211 MB.
 
 Raises `SoundRsError` for an unreadable file or when the build has no NumPy support.
 
+`offset` and `duration` are finite, non-negative seconds. `duration=0` returns an empty array. A requested `sample_rate` must be positive; invalid options raise `SoundRsError(code="usage")` before file access. `mono=True` averages channels before resampling.
+
 ## load_many
 
 ```
-sound_rs.load_many(paths: Sequence[str], threads: int | None = None)
+sound_rs.load_many(paths: Sequence[str], threads: int | None = None,
+                   sample_rate: int | None = None, mono: bool = False)
     -> list[tuple[numpy.ndarray, int]]
 ```
 
-Decodes in parallel with a Rayon pool, releasing the GIL. Order matches `paths`. `threads=None` uses one worker per core. The first file that fails raises, and the rest of the batch is abandoned.
+Decodes in parallel with a Rayon pool, releasing the GIL. Order matches `paths`. `threads=None` or `threads=0` uses the automatic worker count. All files are processed, then the first failure in input order is raised. A requested sample rate must be positive, including for an empty batch.
 
 ```
 clips = sound_rs.load_many(["a.flac", "b.flac"], threads=2)
@@ -86,7 +91,7 @@ Raises `TypeError` for anything that is not a 1D or 2D float32 ndarray, and `Sou
 sound_rs.play_sine_wave(frequency: float, duration: float, sample_rate: int) -> None
 ```
 
-Generates a mono sine tone at half scale and plays it. Useful for checking that audio output works at all.
+Generates a mono sine tone at half scale and plays it. Useful for checking that audio output works at all. Frequency and duration must be finite and non-negative, and the sample rate positive; invalid values raise `SoundRsError(code="usage")` before a device opens.
 
 ```
 sound_rs.play_sine_wave(440.0, 1.0, 44100)
@@ -110,6 +115,8 @@ Writes float32 audio to a WAV file. The array is `(frames,)` for mono or `(frame
 
 Only `.wav` is accepted so far; any other extension raises `SoundRsError` with `code="usage"`. Returns nothing.
 
+The sample rate and channel count must be positive and fit the WAV header. NaN and infinity, incomplete frames, and files too large for classic RIFF are rejected with `code="usage"` before opening the destination. A file-write failure has `code="io"`. Encoding and disk I/O release the GIL after copying the array. Read-only and strided float32 arrays are accepted; float64 remains a `TypeError`.
+
 ```
 audio, rate = sound_rs.load("take.flac")
 sound_rs.write("take.wav", audio, rate, subtype="pcm24")
@@ -121,7 +128,7 @@ sound_rs.write("take.wav", audio, rate, subtype="pcm24")
 sound_rs.load_bytes(data: bytes) -> tuple[numpy.ndarray, int]
 ```
 
-Decodes audio that is already in memory. Same shape, rate and gapless trimming as `load`; the MP4 edit list is read from the buffer as well. Corrupt data raises `SoundRsError` with `code="format"`.
+Decodes audio that is already in memory with the same array layout as `load`; the MP4 edit list is read from the buffer as well. MP3 bytes use Symphonia, while full-file MP3 loads use minimp3, so their samples and alignment can differ. Corrupt data raises `SoundRsError` with `code="format"`.
 
 ## list_devices
 

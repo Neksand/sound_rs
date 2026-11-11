@@ -31,6 +31,17 @@
 
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="unreleased-media">Unreleased — media validation</h2>
+<ul>
+  <li>Bounds-check MP4 box lengths before arithmetic and slicing.</li>
+  <li>Cap metadata-driven initial decode reservations at 32 MiB; this is not a limit on
+      total decoded audio memory.</li>
+  <li>Validate WAV dimensions, sizes and finite samples before touching the destination;
+      include odd PCM24 padding in RIFF size and classify write errors as <code>io</code>.</li>
+  <li>Use checked NumPy read borrows; reject zero or overflowing channel counts.</li>
+  <li>Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and
+      disk I/O release the GIL.</li>
+</ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
@@ -114,7 +125,7 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#unreleased-media">Unreleased — media validation</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.4.0 — MIT</span>

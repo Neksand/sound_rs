@@ -32,7 +32,7 @@ with sound_rs.Player() as player:
 
 ## What it does not do
 
-No effects, no mixing, no recording yet, and no plugin system. If you need a DAW-style graph, this is the wrong tool; if you need to play or load audio reliably, it is the right one. The [benchmark page](benchmarks.html) also says where it is slower than the alternatives.
+No effects, no mixing, and no plugin system. If you need a DAW-style graph, this is the wrong tool; if you need to play or load audio reliably, it is the right one. The [benchmark page](benchmarks.html) also says where it is slower than the alternatives.
 
 ## Where to go next
 

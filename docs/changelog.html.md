@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — media validation
+
+- Bounds-check MP4 box lengths before arithmetic and slicing.
+
+- Cap metadata-driven initial decode reservations at 32 MiB; this is not a limit on total decoded audio memory.
+
+- Validate WAV dimensions, sizes and finite samples before touching the destination; include odd PCM24 padding in RIFF size and classify write errors as `io`.
+
+- Use checked NumPy read borrows; reject zero or overflowing channel counts.
+
+- Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and disk I/O release the GIL.
+
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 
 ## 0.4.0

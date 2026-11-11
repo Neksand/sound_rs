@@ -18,7 +18,7 @@ create_exception!(sound_rs, SoundRsError, pyo3::exceptions::PyRuntimeError);
 
 /// Every failure from this crate is a `SoundRsError` (a `RuntimeError` subclass)
 /// carrying a stable `.code` attribute. Codes are part of the public contract:
-/// `io`, `format`, `device`, `stalled`, `unsupported`.
+/// `io`, `format`, `device`, `stalled`, `unsupported`, `usage`.
 pub(crate) fn error_with(code: &str, message: String) -> PyErr {
     use pyo3::types::PyAnyMethods;
 
@@ -40,6 +40,14 @@ pub(crate) fn error(message: String) -> PyErr {
     error_with(code, message)
 }
 
+#[cfg(feature = "numpy")]
+fn array_channels(channels: usize) -> PyResult<u16> {
+    u16::try_from(channels)
+        .ok()
+        .filter(|&channels| channels != 0)
+        .ok_or_else(|| error_with("usage", "Array must have 1..65535 channels".to_string()))
+}
+
 /// Extracts interleaved f32 samples from a 1D mono or 2D `(frames, channels)`
 /// array, the layout `load` returns.
 pub(crate) fn numpy_frames(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16)> {
@@ -50,20 +58,27 @@ pub(crate) fn numpy_frames(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16)
         if let Ok(array) = array.extract::<Bound<'_, PyArray1<f32>>>() {
             // `as_slice` rejects non-contiguous views; iterating the ndarray
             // view handles strides and copies, which is what callers expect.
-            let view = unsafe { array.as_array() };
+            let borrowed = array
+                .try_readonly()
+                .map_err(|e| error_with("usage", e.to_string()))?;
+            let view = borrowed.as_array();
             return Ok((view.iter().copied().collect(), 1));
         }
 
         if let Ok(array) = array.extract::<Bound<'_, PyArray2<f32>>>() {
-            let view = unsafe { array.as_array() };
+            let borrowed = array
+                .try_readonly()
+                .map_err(|e| error_with("usage", e.to_string()))?;
+            let view = borrowed.as_array();
             let (frames, channels) = view.dim();
+            let channel_count = array_channels(channels)?;
             let mut interleaved = Vec::with_capacity(frames * channels);
             for frame in 0..frames {
                 for channel in 0..channels {
                     interleaved.push(view[[frame, channel]]);
                 }
             }
-            return Ok((interleaved, channels as u16));
+            return Ok((interleaved, channel_count));
         }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
@@ -102,7 +117,10 @@ pub(crate) fn write_array(
     let format =
         writer::Subtype::parse(Some(subtype)).map_err(|message| error_with("usage", message))?;
     let (samples, channels) = numpy_frames(audio)?;
-    writer::write(path, &samples, channels, sample_rate, format).map_err(error)
+    audio
+        .py()
+        .allow_threads(|| writer::write(path, &samples, channels, sample_rate, format))
+        .map_err(|err| error_with(err.code(), err.to_string()))
 }
 
 /// Write audio to a WAV file. `audio` is `(frames,)` or `(frames, channels)`,
@@ -110,13 +128,11 @@ pub(crate) fn write_array(
 #[pyfunction]
 #[pyo3(signature = (file_path, audio, sample_rate, subtype="pcm16"))]
 fn write(
-    py: Python<'_>,
     file_path: &str,
     audio: Bound<'_, PyAny>,
     sample_rate: u32,
     subtype: &str,
 ) -> PyResult<()> {
-    let _ = py;
     write_array(file_path, &audio, sample_rate, subtype)
 }
 
@@ -130,20 +146,27 @@ pub(crate) fn numpy_samples(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16
         if let Ok(array) = array.extract::<Bound<'_, PyArray1<f32>>>() {
             // `as_slice` rejects non-contiguous views; iterating the ndarray
             // view handles strides and copies, which is what callers expect.
-            let view = unsafe { array.as_array() };
+            let borrowed = array
+                .try_readonly()
+                .map_err(|e| error_with("usage", e.to_string()))?;
+            let view = borrowed.as_array();
             return Ok((view.iter().copied().collect(), 1));
         }
 
         if let Ok(array) = array.extract::<Bound<'_, PyArray2<f32>>>() {
-            let view = unsafe { array.as_array() };
+            let borrowed = array
+                .try_readonly()
+                .map_err(|e| error_with("usage", e.to_string()))?;
+            let view = borrowed.as_array();
             let (channels, frames) = view.dim();
+            let channel_count = array_channels(channels)?;
             let mut interleaved = Vec::with_capacity(channels * frames);
             for frame in 0..frames {
                 for channel in 0..channels {
                     interleaved.push(view[[channel, frame]]);
                 }
             }
-            return Ok((interleaved, channels as u16));
+            return Ok((interleaved, channel_count));
         }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
@@ -154,7 +177,8 @@ pub(crate) fn numpy_samples(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16
     #[cfg(not(feature = "numpy"))]
     {
         let _ = array;
-        Err(error(
+        Err(error_with(
+            "unsupported",
             "NumPy support not enabled. Build with the 'numpy' feature.".to_string(),
         ))
     }
@@ -173,8 +197,8 @@ fn play_audio(py: Python<'_>, file_path: &str, device: Option<String>) -> PyResu
 
 /// Check if the file can be decoded, without decoding it.
 #[pyfunction]
-fn is_supported_format(file_path: &str) -> bool {
-    audio::open(file_path).is_ok()
+fn is_supported_format(py: Python<'_>, file_path: &str) -> bool {
+    py.allow_threads(|| audio::open(file_path).is_ok())
 }
 
 /// Get `(sample_rate, channels, duration_seconds)` from the container header.
@@ -205,6 +229,12 @@ fn load<'py>(
         return Err(error_with(
             "usage",
             "sample_rate must be positive".to_string(),
+        ));
+    }
+    if !offset.is_finite() || offset < 0.0 || duration.is_some_and(|d| !d.is_finite() || d < 0.0) {
+        return Err(error_with(
+            "usage",
+            "offset and duration must be finite and non-negative".to_string(),
         ));
     }
     let options = audio::LoadOptions {
@@ -244,8 +274,8 @@ pub(crate) fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound
 }
 
 /// Decode audio bytes already in memory. Returns the same shape and rate as
-/// `load`. The MP4 priming cannot be read without a path, so AAC decoded here
-/// may start a few milliseconds early.
+/// `load`. MP4 priming is read from the bytes; MP3 uses Symphonia here rather
+/// than the minimp3 file decoder, so the two MP3 paths can differ in samples.
 #[pyfunction]
 #[pyo3(signature = (data))]
 fn load_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<(Bound<'py, PyAny>, u32)> {
@@ -267,6 +297,13 @@ fn load_many<'py>(
     mono: bool,
 ) -> PyResult<Vec<(Bound<'py, PyAny>, u32)>> {
     use rayon::prelude::*;
+
+    if sample_rate == Some(0) {
+        return Err(error_with(
+            "usage",
+            "sample_rate must be positive".to_string(),
+        ));
+    }
 
     let options = audio::LoadOptions {
         sample_rate,
@@ -304,21 +341,53 @@ fn load_many<'py>(
 /// Play a NumPy array of f32: 1D mono `(samples,)` or 2D `(channels, samples)`.
 #[pyfunction]
 fn play_array(py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
+    if sample_rate == 0 {
+        return Err(error_with(
+            "usage",
+            "sample_rate must be positive".to_string(),
+        ));
+    }
+    let (samples, channels) = numpy_samples(&array)?;
     let mut player = Player::new(None)?;
-    let _ = py;
-    player.play_array(array, sample_rate)?;
+    player.play_samples(samples, channels, sample_rate)?;
     player.wait(py)
 }
 
 /// Generate a sine tone and play it.
 #[pyfunction]
 fn play_sine_wave(py: Python<'_>, frequency: f32, duration: f32, sample_rate: u32) -> PyResult<()> {
-    let frames = (duration.max(0.0) * sample_rate as f32) as usize;
-    let step = frequency * 2.0 * std::f32::consts::PI / sample_rate.max(1) as f32;
-    let samples: Vec<f32> = (0..frames).map(|i| (i as f32 * step).sin() * 0.5).collect();
+    if sample_rate == 0
+        || !frequency.is_finite()
+        || frequency < 0.0
+        || !duration.is_finite()
+        || duration < 0.0
+    {
+        return Err(error_with(
+            "usage",
+            "frequency and duration must be finite and non-negative; sample_rate must be positive"
+                .to_string(),
+        ));
+    }
+    let count = duration as f64 * sample_rate as f64;
+    if count >= (isize::MAX as usize / std::mem::size_of::<f32>()) as f64 {
+        return Err(error_with(
+            "usage",
+            "Tone is too long to fit in memory".to_string(),
+        ));
+    }
+    let frames = count as usize;
+    let mut samples = Vec::new();
+    samples
+        .try_reserve_exact(frames)
+        .map_err(|_| error_with("unsupported", "Cannot allocate tone buffer".to_string()))?;
+    // Use f64 phase arithmetic so finite f32 inputs cannot overflow to NaN.
+    let step = frequency as f64 * 2.0 * std::f64::consts::PI / sample_rate as f64;
+    py.allow_threads(|| {
+        samples.extend((0..frames).map(|i| ((i as f64 * step).sin() * 0.5) as f32))
+    });
 
     let mut player = Player::new(None)?;
-    player.play_samples(samples, 1, sample_rate.max(1))?;
+    player.play_samples(samples, 1, sample_rate)?;
     player.wait(py)
 }
 

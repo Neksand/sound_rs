@@ -46,7 +46,7 @@ with sound_rs.Player() as player:
 </ul>
 
 <h2 id="what-it-does-not">What it does not do</h2>
-<p>No effects, no mixing, no recording yet, and no plugin system. If you need a DAW-style
+<p>No effects, no mixing, and no plugin system. If you need a DAW-style
 graph, this is the wrong tool; if you need to play or load audio reliably, it is the right
 one. The <a href="benchmarks.html">benchmark page</a> also says where it is slower than the
 alternatives.</p>
@@ -669,14 +669,15 @@ page(
     """
 <p class="kicker">09 · Reference</p>
 <h1>API reference</h1>
-<p class="lead">Nine functions, one class. Everything raises <code>sound_rs.SoundRsError</code>,
-a subclass of <code>RuntimeError</code>, on failure.</p>
+<p class="lead">Playback, recording, decoding and WAV writing. Library failures raise
+<code>sound_rs.SoundRsError</code>, a subclass of <code>RuntimeError</code>, with a stable
+<code>.code</code>. Invalid Python argument types can raise <code>TypeError</code>.</p>
 
 <h2 id="module">Module</h2>
 <p><code class="num">sound_rs.__version__</code> — the installed version as a string, for example
 <code class="num">"0.2.1"</code>.</p>
-<p><code>class sound_rs.SoundRsError(RuntimeError)</code> — the only exception type the library
-raises. Catch it instead of the individual causes.</p>
+<p><code>class sound_rs.SoundRsError(RuntimeError)</code> carries a stable
+<code>code: str</code> describing the failure; see <a href="guarantees.html#errors">error codes</a>.</p>
 
 <h2 id="play-audio">play_audio</h2>
 """ + code("""
@@ -718,22 +719,30 @@ in that case the file is decoded to measure it.</p>
 
 <h2 id="load">load</h2>
 """ + code("""
-sound_rs.load(file_path: str) -> tuple[numpy.ndarray, int]
+sound_rs.load(file_path: str, sample_rate: int | None = None, mono: bool = False,
+              offset: float = 0.0, duration: float | None = None)
+    -> tuple[numpy.ndarray, int]
 """) + """
 <p>Decodes the whole file to float32 with shape <code>(frames, channels)</code>, and returns it
 with the sample rate. Requires NumPy. Peak memory is the decoded audio: 10 minutes of stereo
 is 211 MB.</p>
 <p>Raises <code>SoundRsError</code> for an unreadable file or when the build has no NumPy
 support.</p>
+<p><code>offset</code> and <code>duration</code> are finite, non-negative seconds.
+<code>duration=0</code> returns an empty array. A requested <code>sample_rate</code> must be
+positive; invalid options raise <code>SoundRsError(code="usage")</code> before file access.
+<code>mono=True</code> averages channels before resampling.</p>
 
 <h2 id="load-many">load_many</h2>
 """ + code("""
-sound_rs.load_many(paths: Sequence[str], threads: int | None = None)
+sound_rs.load_many(paths: Sequence[str], threads: int | None = None,
+                   sample_rate: int | None = None, mono: bool = False)
     -> list[tuple[numpy.ndarray, int]]
 """) + """
 <p>Decodes in parallel with a Rayon pool, releasing the GIL. Order matches <code>paths</code>.
-<code>threads=None</code> uses one worker per core. The first file that fails raises, and the
-rest of the batch is abandoned.</p>
+<code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. All files
+are processed, then the first failure in input order is raised. A requested sample rate must
+be positive, including for an empty batch.</p>
 """ + code("""
 clips = sound_rs.load_many(["a.flac", "b.flac"], threads=2)
 """) + """
@@ -752,7 +761,8 @@ until playback ends.</p>
 sound_rs.play_sine_wave(frequency: float, duration: float, sample_rate: int) -> None
 """) + """
 <p>Generates a mono sine tone at half scale and plays it. Useful for checking that audio
-output works at all.</p>
+output works at all. Frequency and duration must be finite and non-negative, and the sample
+rate positive; invalid values raise <code>SoundRsError(code="usage")</code> before a device opens.</p>
 """ + code("""
 sound_rs.play_sine_wave(440.0, 1.0, 44100)
 """) + """
@@ -774,6 +784,11 @@ sound_rs.write(file_path: str, audio, sample_rate: int, subtype: str = "pcm16") 
 clipped. Subtypes: <code>pcm16</code>, <code>pcm24</code>, <code>float32</code>.</p>
 <p>Only <code>.wav</code> is accepted so far; any other extension raises
 <code>SoundRsError</code> with <code>code="usage"</code>. Returns nothing.</p>
+<p>The sample rate and channel count must be positive and fit the WAV header. NaN and
+infinity, incomplete frames, and files too large for classic RIFF are rejected with
+<code>code="usage"</code> before opening the destination. A file-write failure has
+<code>code="io"</code>. Encoding and disk I/O release the GIL after copying the array.
+Read-only and strided float32 arrays are accepted; float64 remains a <code>TypeError</code>.</p>
 """ + code("""
 audio, rate = sound_rs.load("take.flac")
 sound_rs.write("take.wav", audio, rate, subtype="pcm24")
@@ -782,8 +797,9 @@ sound_rs.write("take.wav", audio, rate, subtype="pcm24")
 """ + code("""
 sound_rs.load_bytes(data: bytes) -> tuple[numpy.ndarray, int]
 """) + """
-<p>Decodes audio that is already in memory. Same shape, rate and gapless trimming as
-<code>load</code>; the MP4 edit list is read from the buffer as well. Corrupt data raises
+<p>Decodes audio that is already in memory with the same array layout as <code>load</code>;
+the MP4 edit list is read from the buffer as well. MP3 bytes use Symphonia, while full-file
+MP3 loads use minimp3, so their samples and alignment can differ. Corrupt data raises
 <code>SoundRsError</code> with <code>code="format"</code>.</p>
 
 <h2 id="list-devices">list_devices</h2>
@@ -1051,6 +1067,17 @@ page(
     """
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="unreleased-media">Unreleased — media validation</h2>
+<ul>
+  <li>Bounds-check MP4 box lengths before arithmetic and slicing.</li>
+  <li>Cap metadata-driven initial decode reservations at 32 MiB; this is not a limit on
+      total decoded audio memory.</li>
+  <li>Validate WAV dimensions, sizes and finite samples before touching the destination;
+      include odd PCM24 padding in RIFF size and classify write errors as <code>io</code>.</li>
+  <li>Use checked NumPy read borrows; reject zero or overflowing channel counts.</li>
+  <li>Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and
+      disk I/O release the GIL.</li>
+</ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
@@ -1423,16 +1450,17 @@ page(
 the list, and the ones that are deliberately not on it.</p>
 
 <h2 id="errors">Errors</h2>
-<p>Every failure is <code>sound_rs.SoundRsError</code> (a <code>RuntimeError</code>) with a
-stable <code>.code</code>:</p>
+<p>Library failures use <code>sound_rs.SoundRsError</code> (a <code>RuntimeError</code>) with a
+stable <code>.code</code>. Python argument conversion can raise <code>TypeError</code> or
+<code>OverflowError</code>; float64 arrays are rejected rather than silently converted.</p>
 <table>
   <tr><th>Code</th><th>Meaning</th></tr>
-  <tr><td class="num">io</td><td>The file could not be opened or read.</td></tr>
+  <tr><td class="num">io</td><td>The file could not be opened, read or written.</td></tr>
   <tr><td class="num">format</td><td>The container or codec was not understood, or no audio was decodable.</td></tr>
   <tr><td class="num">device</td><td>No output/input device, or the device refused to open.</td></tr>
   <tr><td class="num">stalled</td><td>Playback made no progress for two seconds; the device probably disappeared.</td></tr>
   <tr><td class="num">unsupported</td><td>The build lacks a feature (NumPy) or hit a documented limit.</td></tr>
-  <tr><td class="num">usage</td><td>The call order was wrong, for example <code>feed()</code> before <code>begin_feed()</code>.</td></tr>
+  <tr><td class="num">usage</td><td>Invalid values, WAV dimensions or call order, for example <code>feed()</code> before <code>begin_feed()</code>.</td></tr>
 </table>
 <p>Codes are part of the API: renaming one is a breaking change.</p>
 
