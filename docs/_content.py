@@ -1158,6 +1158,22 @@ page(
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
+<h2 id="v041">0.4.1</h2>
+<p class="kicker">reliability</p>
+<ul>
+  <li>Python inputs and container boundaries are validated before arithmetic: invalid times,
+      rates, dimensions and truncated WAV headers raise <code>usage</code> or <code>io</code>
+      instead of overflowing or producing a broken file.</li>
+  <li>Playback lifecycle: the final written prefix is drained, a user pause survives queue
+      handover, and backend faults are signalled instead of swallowed.</li>
+  <li>Recording captures through a bounded ring into a collector thread; overflow and device
+      faults raise instead of returning an incomplete take.</li>
+  <li>Streaming resampling keeps an exact converted frame count, including the filter tail.</li>
+  <li>PyO3 0.29.3 and numpy 0.29 (past the RustSec advisory range); blocking paths moved to
+      <code>py.detach</code>.</li>
+  <li>New checks: 31 Python tests, generated-site validation, headless benchmark mode.</li>
+</ul>
+
 <h2 id="v040">0.4.0</h2>
 <p class="kicker">recording era — writing files</p>
 <ul>

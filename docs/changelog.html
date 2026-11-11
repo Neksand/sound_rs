@@ -77,6 +77,22 @@
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
+<h2 id="v041">0.4.1</h2>
+<p class="kicker">reliability</p>
+<ul>
+  <li>Python inputs and container boundaries are validated before arithmetic: invalid times,
+      rates, dimensions and truncated WAV headers raise <code>usage</code> or <code>io</code>
+      instead of overflowing or producing a broken file.</li>
+  <li>Playback lifecycle: the final written prefix is drained, a user pause survives queue
+      handover, and backend faults are signalled instead of swallowed.</li>
+  <li>Recording captures through a bounded ring into a collector thread; overflow and device
+      faults raise instead of returning an incomplete take.</li>
+  <li>Streaming resampling keeps an exact converted frame count, including the filter tail.</li>
+  <li>PyO3 0.29.3 and numpy 0.29 (past the RustSec advisory range); blocking paths moved to
+      <code>py.detach</code>.</li>
+  <li>New checks: 31 Python tests, generated-site validation, headless benchmark mode.</li>
+</ul>
+
 <h2 id="v040">0.4.0</h2>
 <p class="kicker">recording era — writing files</p>
 <ul>
@@ -157,7 +173,7 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#unreleased-media">Unreleased — media validation</a><a href="#unreleased-player">Unreleased — playback lifecycle</a><a href="#unreleased-recorder">Unreleased — bounded recording</a><a href="#unreleased-resampler">Unreleased — streaming resampler</a><a href="#unreleased-dependencies">Unreleased — Python bindings</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#unreleased-media">Unreleased — media validation</a><a href="#unreleased-player">Unreleased — playback lifecycle</a><a href="#unreleased-recorder">Unreleased — bounded recording</a><a href="#unreleased-resampler">Unreleased — streaming resampler</a><a href="#unreleased-dependencies">Unreleased — Python bindings</a><a href="#v041">0.4.1</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.4.1 — MIT</span>

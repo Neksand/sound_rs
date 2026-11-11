@@ -42,6 +42,20 @@
 
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 
+## 0.4.1
+
+- Python inputs and container boundaries are validated before arithmetic: invalid times, rates, dimensions and truncated WAV headers raise `usage` or `io` instead of overflowing or producing a broken file.
+
+- Playback lifecycle: the final written prefix is drained, a user pause survives queue handover, and backend faults are signalled instead of swallowed.
+
+- Recording captures through a bounded ring into a collector thread; overflow and device faults raise instead of returning an incomplete take.
+
+- Streaming resampling keeps an exact converted frame count, including the filter tail.
+
+- PyO3 0.29.3 and numpy 0.29 (past the RustSec advisory range); blocking paths moved to `py.detach`.
+
+- New checks: 31 Python tests, generated-site validation, headless benchmark mode.
+
 ## 0.4.0
 
 - `sound_rs.write(path, audio, rate, subtype=)` writes WAV in PCM16, PCM24 or float32. Arrays are `(frames, channels)`, matching `load`, so a load/write round-trip needs no transpose.
