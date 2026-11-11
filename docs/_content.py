@@ -1158,6 +1158,13 @@ page(
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
+<h2 id="v042">0.4.2</h2>
+<p class="kicker">documentation</p>
+<ul>
+  <li>PyPI carries the corrected README: the release line points at the current version,
+      and every link is absolute so it resolves on the package page.</li>
+</ul>
+
 <h2 id="v041">0.4.1</h2>
 <p class="kicker">reliability</p>
 <ul>

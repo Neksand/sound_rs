@@ -42,6 +42,10 @@
 
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 
+## 0.4.2
+
+- PyPI carries the corrected README: the release line points at the current version, and every link is absolute so it resolves on the package page.
+
 ## 0.4.1
 
 - Python inputs and container boundaries are validated before arithmetic: invalid times, rates, dimensions and truncated WAV headers raise `usage` or `io` instead of overflowing or producing a broken file.

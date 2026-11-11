@@ -4,7 +4,7 @@
 > without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux
 > x86_64/aarch64, Windows amd64, macOS arm64/Intel.
 
-Version 0.4.1. Install with `pip install sound_rs`. Playback waits release
+Version 0.4.2. Install with `pip install sound_rs`. Playback waits release
 the GIL; decoding returns float32 `(frames, channels)` arrays; library failures raise
 `sound_rs.SoundRsError` with a `.code` of `io`, `format`, `device`, `stalled`,
 `unsupported` or `usage`.

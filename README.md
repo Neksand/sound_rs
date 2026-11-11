@@ -16,8 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.4.0](https://github.com/Neksand/sound_rs/releases/tag/v0.4.0) — the
-recording era begins: write WAV, record straight to a file. Guides for coding agents:
+**Latest release:** [0.4.2](https://github.com/Neksand/sound_rs/releases/tag/v0.4.2) — reliability
+release: input and container validation, bounded recording capture, exact streaming frame
+counts, PyO3 0.29. Writing and recording-to-file arrived in 0.4.0. Guides for coding agents:
 [llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](https://github.com/Neksand/sound_rs/blob/master/AGENTS.md).
 
 ---
