@@ -23,7 +23,7 @@ pub(crate) fn error_with(code: &str, message: String) -> PyErr {
     use pyo3::types::PyAnyMethods;
 
     let err = SoundRsError::new_err(message);
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let _ = err.value(py).setattr("code", code);
     });
     err
@@ -119,7 +119,7 @@ pub(crate) fn write_array(
     let (samples, channels) = numpy_frames(audio)?;
     audio
         .py()
-        .allow_threads(|| writer::write(path, &samples, channels, sample_rate, format))
+        .detach(|| writer::write(path, &samples, channels, sample_rate, format))
         .map_err(|err| error_with(err.code(), err.to_string()))
 }
 
@@ -198,7 +198,7 @@ fn play_audio(py: Python<'_>, file_path: &str, device: Option<String>) -> PyResu
 /// Check if the file can be decoded, without decoding it.
 #[pyfunction]
 fn is_supported_format(py: Python<'_>, file_path: &str) -> bool {
-    py.allow_threads(|| audio::open(file_path).is_ok())
+    py.detach(|| audio::open(file_path).is_ok())
 }
 
 /// Get `(sample_rate, channels, duration_seconds)` from the container header.
@@ -207,7 +207,7 @@ fn is_supported_format(py: Python<'_>, file_path: &str) -> bool {
 /// or one packet for AAC, whose container has no channel layout.
 #[pyfunction]
 fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> {
-    py.allow_threads(|| audio::info_or_decode(file_path))
+    py.detach(|| audio::info_or_decode(file_path))
         .map_err(error)
 }
 
@@ -244,7 +244,7 @@ fn load<'py>(
         duration,
     };
     let audio = py
-        .allow_threads(|| audio::decode_with_options(file_path, options))
+        .detach(|| audio::decode_with_options(file_path, options))
         .map_err(error)?;
     into_array(py, audio)
 }
@@ -279,9 +279,7 @@ pub(crate) fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound
 #[pyfunction]
 #[pyo3(signature = (data))]
 fn load_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<(Bound<'py, PyAny>, u32)> {
-    let audio = py
-        .allow_threads(|| audio::decode_bytes(data))
-        .map_err(error)?;
+    let audio = py.detach(|| audio::decode_bytes(data)).map_err(error)?;
     into_array(py, audio)
 }
 
@@ -311,7 +309,7 @@ fn load_many<'py>(
         offset: 0.0,
         duration: None,
     };
-    let decoded: Vec<Result<audio::Audio, String>> = py.allow_threads(|| {
+    let decoded: Vec<Result<audio::Audio, String>> = py.detach(|| {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(threads.unwrap_or(0))
             .build();
@@ -382,9 +380,7 @@ fn play_sine_wave(py: Python<'_>, frequency: f32, duration: f32, sample_rate: u3
         .map_err(|_| error_with("unsupported", "Cannot allocate tone buffer".to_string()))?;
     // Use f64 phase arithmetic so finite f32 inputs cannot overflow to NaN.
     let step = frequency as f64 * 2.0 * std::f64::consts::PI / sample_rate as f64;
-    py.allow_threads(|| {
-        samples.extend((0..frames).map(|i| ((i as f64 * step).sin() * 0.5) as f32))
-    });
+    py.detach(|| samples.extend((0..frames).map(|i| ((i as f64 * step).sin() * 0.5) as f32)));
 
     let mut player = Player::new(None)?;
     player.play_samples(samples, 1, sample_rate)?;
@@ -422,7 +418,9 @@ fn list_input_devices() -> PyResult<Vec<(usize, String, bool)>> {
     recorder::input_devices().map_err(|message| error_with("device", message))
 }
 
-#[pymodule]
+// Keep the existing GIL requirement; dependency updates must not silently opt
+// the NumPy and device APIs into unverified free-threaded operation.
+#[pymodule(gil_used = true)]
 fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Player>()?;
     m.add_class::<recorder::Recorder>()?;

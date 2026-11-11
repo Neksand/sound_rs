@@ -1,7 +1,7 @@
 # Final engineering report
 
 Date: 2026-11-11. Audited baseline: `c1898635c49534e51437ad853951477094ed0665` (0.4.0).
-This report describes a locally implemented and validated PR series. Submission and remote CI
+This report describes an implemented, locally validated and submitted PR series. Submission and remote CI
 status are recorded separately below and in the [PR roadmap](../PR_ROADMAP.md).
 
 ## Executive outcome
@@ -98,13 +98,13 @@ extension; raw data are [before](benchmark-before.json) and [after](benchmark-af
 
 | Format | Before median | After median | After p95 | After p99 | After peak RSS |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| WAV | 26.42 ms | 27.11 ms | 28.35 ms | 28.59 ms | 53.48 MiB |
-| FLAC | 38.26 ms | 38.34 ms | 39.23 ms | 39.36 ms | 53.92 MiB |
-| AAC/M4A | 43.79 ms | 44.88 ms | 48.03 ms | 48.04 ms | 55.88 MiB |
-| MP3 | 34.58 ms | 35.82 ms | 35.91 ms | 35.92 ms | 53.67 MiB |
+| WAV | 26.42 ms | 27.10 ms | 29.41 ms | 29.81 ms | 53.72 MiB |
+| FLAC | 38.26 ms | 35.82 ms | 36.08 ms | 36.08 ms | 53.67 MiB |
+| AAC/M4A | 43.79 ms | 43.52 ms | 45.17 ms | 45.35 ms | 55.80 MiB |
+| MP3 | 34.58 ms | 34.94 ms | 35.13 ms | 35.16 ms | 53.64 MiB |
 
 These are small diagnostic samples on one machine without CPU affinity/thermal isolation. Medians
-are slightly slower; no speedup or statistically established regression claim is justified. The
+vary slightly; no speedup or statistically established regression claim is justified. The
 work optimizes correctness and callback allocation behavior, not decoder algorithms. Process RSS
 includes interpreter, extension and audio buffers. The separate full headless 3s/600s run is in
 [benchmark-headless.json](benchmark-headless.json); it is a different workload and must not be
@@ -150,11 +150,27 @@ ring-starvation underrun count. The recorder cap is audio payload, not total pro
 
 ## PR submission and remote CI
 
-Status at report preparation: six locally prepared PRs; no remote success or CI result is assumed.
-The [roadmap](../PR_ROADMAP.md) lists branch/base, scope, dependencies, risks and acceptance criteria.
-Actual PR URLs and observed CI results are added after submission. The owner-authorized temporary
-credential is used only for this repository; no personal-account fork is created. Nothing is merged,
-tagged, published or deployed.
+All six PRs were submitted to `Neksand/sound_rs` as `Neksand` on 2026-11-11.
+The [roadmap](../PR_ROADMAP.md) describes review order, bases, scope and acceptance criteria.
+
+| PR | Scope | Remote status |
+| --- | --- | --- |
+| [#2](https://github.com/Neksand/sound_rs/pull/2) | media | Open; latest CI results are on the linked PR |
+| [#3](https://github.com/Neksand/sound_rs/pull/3) | player | Open; latest CI results are on the linked PR |
+| [#4](https://github.com/Neksand/sound_rs/pull/4) | recorder | Open; latest CI results are on the linked PR |
+| [#5](https://github.com/Neksand/sound_rs/pull/5) | resampler | Open; latest CI results are on the linked PR |
+| [#6](https://github.com/Neksand/sound_rs/pull/6) | quality | Open; latest CI results are on the linked PR |
+| [#7](https://github.com/Neksand/sound_rs/pull/7) | dependencies | Open; latest CI results are on the linked PR |
+
+The first remote runs passed their completed Linux/Windows, Python, lint and documentation
+checks, but macOS jobs were cancelled before starting: GitHub reported the `macos-14` runner
+configuration unsupported. [GitHub retired these images on 2026-11-02](https://github.com/actions/runner-images#available-images).
+The complete series now uses the supported `macos-15` image for CI and release wheel builds.
+The PR checks are the authoritative status for each current head; local checks alone are not
+reported as cross-platform CI success. Release publication and hardware tests were not run.
+
+All pushes and PR creation used the owner-authorized temporary credential. No personal-account
+fork was created. Nothing was merged, tagged, published or deployed.
 
 ## Recommendation
 

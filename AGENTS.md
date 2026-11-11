@@ -55,7 +55,7 @@ separate optional runs; never report them passed merely because a headless job p
    applies gain from an `Arc<Vec<f32>>` or an `rtrb` ring; capture converts into a bounded
    ring. Silence on playback lock contention is not counted in `Player.underruns`.
 4. **Release the GIL around bulk decode/write and playback/recording waits** using the
-   applicable PyO3 API (`allow_threads` at baseline; `detach` after the dependency upgrade).
+   PyO3 `py.detach` API.
    Do not claim every blocking path releases it: array preparation, player joins and device
    teardown still have ownership constraints. Create, use and destroy each Player/Recorder
    on the same thread; sequential access from another thread is also invalid.

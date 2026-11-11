@@ -784,9 +784,8 @@ impl Player {
             }
         };
 
-        let result = py.allow_threads(|| {
-            feed_samples(producer, &ready, Duration::from_secs(5), &device_failed)
-        });
+        let result =
+            py.detach(|| feed_samples(producer, &ready, Duration::from_secs(5), &device_failed));
         result.map_err(|message| {
             let code = if device_failed.load(Ordering::Relaxed) {
                 "device"
@@ -929,7 +928,7 @@ impl Player {
     /// Block until the current source finishes playing.
     pub(crate) fn wait(&mut self, py: Python<'_>) -> PyResult<()> {
         let core = self.core.clone();
-        py.allow_threads(move || {
+        py.detach(move || {
             let drain = wait_loop(core);
             std::thread::sleep(drain.unwrap_or(Duration::from_millis(20)));
         });

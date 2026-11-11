@@ -143,7 +143,7 @@ fn run(py: Python<'_>, command: Command) -> i32 {
             }
             Err(message) => fail(message),
         },
-        Command::Info(path) => match py.allow_threads(|| audio::info_or_decode(&path)) {
+        Command::Info(path) => match py.detach(|| audio::info_or_decode(&path)) {
             Ok((rate, channels, seconds)) => {
                 println!("file         {path}");
                 println!("sample rate  {rate} Hz");

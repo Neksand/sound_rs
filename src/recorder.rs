@@ -340,7 +340,7 @@ impl Recorder {
             })?;
         if let Err(error) = stream.play() {
             drop(stream);
-            let _ = py.allow_threads(move || collector.join());
+            let _ = py.detach(move || collector.join());
             return Err(error_with("device", format!("Capture failed: {error}")));
         }
         self.capture = status;
@@ -407,7 +407,7 @@ impl Recorder {
         self.expected_frames = Some(frames);
         let wait = Duration::from_secs_f64(seconds);
         let status = self.capture.clone();
-        py.allow_threads(move || {
+        py.detach(move || {
             let start = Instant::now();
             while status.failure().is_none() {
                 let remaining = wait.saturating_sub(start.elapsed());
@@ -429,7 +429,7 @@ impl Recorder {
         drop(self.stream.take());
         let mut samples = match self.collector.take() {
             Some(collector) => py
-                .allow_threads(move || collector.join())
+                .detach(move || collector.join())
                 .unwrap_or(Err(CaptureError::Worker))?,
             None => Vec::new(),
         };

@@ -9,16 +9,18 @@ The series is stacked deliberately: generated documentation, Python stubs and CI
 the same workstreams, and the PyO3 migration must include the newly added blocking-work calls.
 Each PR diff isolates one concern against the preceding validated tree. Merge in order; after
 merging a base PR, retarget its successor to `master` before merging it. Do not squash the entire
-program into one PR. The combined tree is validated separately from each original workstream.
+program into one PR. If a base PR is squash- or rebase-merged, rebase its successors onto the new
+master before retargeting so earlier commits are not reintroduced. The combined tree is validated
+separately from each original workstream.
 
 | Order | Title | Head branch | Initial base | Status / URL |
 | --- | --- | --- | --- | --- |
-| 1 | fix(media): validate container sizes and Python audio inputs | `fix/media-boundary-validation` | `master` | Locally prepared; not yet submitted |
-| 2 | fix(player): preserve source state and drain playback correctly | `fix/player-stream-lifecycle` | `fix/media-boundary-validation` | Locally prepared; not yet submitted |
-| 3 | fix(recorder): collect capture through a bounded ring | `fix/recorder-bounded-capture` | `fix/player-stream-lifecycle` | Locally prepared; not yet submitted |
-| 4 | fix(streaming): drain resampler tail with exact frame accounting | `fix/stream-resampler-tail` | `fix/recorder-bounded-capture` | Locally prepared; not yet submitted |
-| 5 | test: validate APIs, generated docs and portable wheels | `test/portable-validation` | `fix/stream-resampler-tail` | Locally prepared; not yet submitted |
-| 6 | fix(deps): upgrade PyO3 bindings past known advisory ranges | `fix/dependency-advisories` | `test/portable-validation` | Locally prepared; not yet submitted |
+| 1 | fix(media): validate container sizes and Python audio inputs | `fix/media-boundary-validation` | `master` | [Open PR #2](https://github.com/Neksand/sound_rs/pull/2) |
+| 2 | fix(player): preserve source state and drain playback correctly | `fix/player-stream-lifecycle` | `fix/media-boundary-validation` | [Open PR #3](https://github.com/Neksand/sound_rs/pull/3) |
+| 3 | fix(recorder): collect capture through a bounded ring | `fix/recorder-bounded-capture` | `fix/player-stream-lifecycle` | [Open PR #4](https://github.com/Neksand/sound_rs/pull/4) |
+| 4 | fix(streaming): drain resampler tail with exact frame accounting | `fix/stream-resampler-tail` | `fix/recorder-bounded-capture` | [Open PR #5](https://github.com/Neksand/sound_rs/pull/5) |
+| 5 | test: validate APIs, generated docs and portable wheels | `test/portable-validation` | `fix/stream-resampler-tail` | [Open PR #6](https://github.com/Neksand/sound_rs/pull/6) |
+| 6 | fix(deps): upgrade PyO3 bindings past known advisory ranges | `fix/dependency-advisories` | `test/portable-validation` | [Open PR #7](https://github.com/Neksand/sound_rs/pull/7) |
 
 ## 1. Media and Python inputs
 

@@ -1148,6 +1148,13 @@ page(
   <li>Test numerical output against a full filter pass across packet sizes, sample rates,
       stereo channels and impulses at the end of a track. Full-decode fixtures are unchanged.</li>
 </ul>
+<h2 id="unreleased-dependencies">Unreleased — Python bindings</h2>
+<ul>
+  <li>Upgrade PyO3 to 0.29.3 and the numpy Rust crate to 0.29, removing affected PyO3
+      versions from two RustSec advisory ranges while preserving the Python 3.10+ stable ABI.</li>
+  <li>Explicitly retain the GIL requirement. Decoder dependencies and fixture hashes are
+      unchanged; the separate minimp3/slice-ring-buffer advisory remains unresolved.</li>
+</ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
