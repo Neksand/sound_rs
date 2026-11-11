@@ -1100,6 +1100,15 @@ page(
   <li>Report backend failures through an atomic flag and avoid blocking on callback state
       contention. Keep hardware recovery and continuous feed resampling as future work.</li>
 </ul>
+<h2 id="unreleased-recorder">Unreleased — bounded recording</h2>
+<ul>
+  <li>Move capture allocation and synchronization out of the input callback into a collector
+      behind a bounded ring; preserve the 230 M sample storage limit.</li>
+  <li>Report overflow, allocation and device faults; drain final input on shutdown and
+      release the GIL while joining the collector.</li>
+  <li>Make the documented <code>record_to(..., subtype="pcm16")</code> default effective at
+      runtime and include context manager methods in the type stub.</li>
+</ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
@@ -1452,8 +1461,17 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
   <li>The capture starts when the device delivers its first buffer. On Bluetooth headsets that
       is 100–150 ms, so a short take can be that much shorter than requested — the recorder
       never adds frames to hide it.</li>
-  <li>Captured samples are held in memory: the buffer caps at 230 M samples (~40 minutes of
-      48 kHz stereo). Past that the recorder raises instead of exhausting RAM.</li>
+  <li>The callback writes to a bounded input ring (normally one second, at most 4 MiB).
+      A collector thread stores the take outside the audio callback. The recording limit
+      remains 230 M float32 samples (920 MB of payload, roughly 40 minutes at 48 kHz stereo).
+      This is not a cap on total process memory.</li>
+  <li>Input overflow invalidates the take with <code>code="stalled"</code>, the storage limit
+      or allocation failure uses <code>unsupported</code>, and a backend failure uses
+      <code>device</code>. The library does not return a successful partial take after these
+      faults. <code>stop()</code> drains the final callback and joins the collector with the
+      GIL released.</li>
+  <li><code>record_to()</code> records to memory before writing the WAV; it is not an
+      incremental disk recorder.</li>
   <li>No resampling, mixing or effects on input — capture is raw device audio.</li>
   <li>Duplex (playing while recording) works because they are separate streams, but they are
       independent objects with independent device handles.</li>
@@ -1511,7 +1529,8 @@ fixtures; a decoder change that moves a single sample fails CI.</p>
       (43 MB peak on a 10-minute file, measured).</li>
   <li><code>load</code> allocates the decoded audio once; <code>load_many</code> allocates all
       results at once, so size your batches.</li>
-  <li>The recorder caps its buffer at 230 M samples instead of growing without bound.</li>
+  <li>The recorder has a bounded callback ring and stores at most 230 M float32 samples
+      (920 MB payload) on a collector thread; overflow and device errors invalidate the take.</li>
   <li>A 100-cycle playback soak grows RSS by less than 20 MB (measured: 0.0 MB).</li>
 </ul>
 

@@ -81,7 +81,11 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
 
 - The capture starts when the device delivers its first buffer. On Bluetooth headsets that is 100–150 ms, so a short take can be that much shorter than requested — the recorder never adds frames to hide it.
 
-- Captured samples are held in memory: the buffer caps at 230 M samples (~40 minutes of 48 kHz stereo). Past that the recorder raises instead of exhausting RAM.
+- The callback writes to a bounded input ring (normally one second, at most 4 MiB). A collector thread stores the take outside the audio callback. The recording limit remains 230 M float32 samples (920 MB of payload, roughly 40 minutes at 48 kHz stereo). This is not a cap on total process memory.
+
+- Input overflow invalidates the take with `code="stalled"`, the storage limit or allocation failure uses `unsupported`, and a backend failure uses `device`. The library does not return a successful partial take after these faults. `stop()` drains the final callback and joins the collector with the GIL released.
+
+- `record_to()` records to memory before writing the WAV; it is not an incremental disk recorder.
 
 - No resampling, mixing or effects on input — capture is raw device audio.
 

@@ -33,7 +33,8 @@ recording era begins: write WAV, record straight to a file. Guides for coding ag
   16 kHz mono in one call, or decode only a window
 - **Parallel decode:** `load_many(paths, sample_rate=, mono=)` uses every core, GIL released
 - **Recording:** `Recorder()` captures from the microphone; `record_to(path, seconds)`
-  saves a take in one call
+  saves a take in one call. A bounded callback ring feeds a collector thread; overflow
+  and device faults raise an error instead of returning an incomplete successful take
 - **Writing:** `write(path, audio, rate, subtype=)` saves WAV as PCM16, PCM24 or float32
   with validated header sizes and finite samples; encoding and writing release the GIL
 - **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push

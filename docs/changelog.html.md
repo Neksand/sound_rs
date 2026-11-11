@@ -20,6 +20,14 @@
 
 - Report backend failures through an atomic flag and avoid blocking on callback state contention. Keep hardware recovery and continuous feed resampling as future work.
 
+## Unreleased — bounded recording
+
+- Move capture allocation and synchronization out of the input callback into a collector behind a bounded ring; preserve the 230 M sample storage limit.
+
+- Report overflow, allocation and device faults; drain final input on shutdown and release the GIL while joining the collector.
+
+- Make the documented `record_to(..., subtype="pcm16")` default effective at runtime and include context manager methods in the type stub.
+
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 
 ## 0.4.0

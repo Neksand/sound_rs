@@ -3,6 +3,7 @@
 Needs the extension on sys.path: build it with `maturin develop` or point
 PYTHONPATH at a directory containing sound_rs.so / sound_rs*.so.
 """
+import inspect
 import math
 import os
 import shutil
@@ -33,6 +34,9 @@ def write_wav(path, seconds, rate=RATE, channels=1, width=2):
 
 
 def main():
+    # The Rust binding must match the documented and typed recording default.
+    assert inspect.signature(sound_rs.Recorder.record_to).parameters["subtype"].default == "pcm16"
+
     tmp = tempfile.mkdtemp()
     FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
     mono = os.path.join(tmp, "mono.wav")

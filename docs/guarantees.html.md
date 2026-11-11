@@ -39,7 +39,7 @@ Decoding is deterministic: the same file produces the same float32 samples on ev
 
 - `load` allocates the decoded audio once; `load_many` allocates all results at once, so size your batches.
 
-- The recorder caps its buffer at 230 M samples instead of growing without bound.
+- The recorder has a bounded callback ring and stores at most 230 M float32 samples (920 MB payload) on a collector thread; overflow and device errors invalidate the take.
 
 - A 100-cycle playback soak grows RSS by less than 20 MB (measured: 0.0 MB).
 
