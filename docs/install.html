@@ -26,7 +26,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html" aria-current="page">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html" aria-current="page">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">01 · Start</p>
@@ -39,7 +39,8 @@ are needed.</p>
 <ul>
   <li>Python 3.10 or newer, CPython.</li>
   <li>Linux x86_64 or aarch64, Windows amd64, macOS arm64 or Intel — all ship wheels.</li>
-  <li>NumPy only if you use <code>play_array</code>, <code>load</code> or <code>load_many</code>.</li>
+  <li>NumPy for array playback, loading, writing and recording arrays:
+      install with <code>pip install 'sound_rs[numpy]'</code>.</li>
 </ul>
 
 <table>
@@ -64,7 +65,7 @@ maturin develop --release</code></pre>
 <p>Playback uses ALSA through <code>cpal</code>. Most desktops already have the runtime
 library; a minimal container or server needs it explicitly:</p>
 <pre data-lang="bash"><code>sudo apt install libasound2          # Debian / Ubuntu (libasound2t64 on 24.04+)
-sudo dnf install alsa-lib            # Fedora</code></pre><div class="note"><b>Decoding does not need ALSA</b>If the library is missing, <code>import sound_rs</code> fails at load time, not on the first play. Install the package above, or use a build with playback disabled.</div>
+sudo dnf install alsa-lib            # Fedora</code></pre><div class="note"><b>The wheel links the ALSA runtime</b>If the library is missing, <code>import sound_rs</code> fails at load time, not on the first play. Install the package above. There is currently no supported playback-disabled build feature; no external audio decoder is required.</div>
 <h2 id="check">Check it works</h2>
 <pre data-lang=""><code>import sound_rs
 

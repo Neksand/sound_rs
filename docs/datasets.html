@@ -26,7 +26,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html" aria-current="page">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html" aria-current="page">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">08 · Guides</p>
@@ -64,14 +64,16 @@ the same work twice on stereo.</p>
 audio, rate = sound_rs.load(&quot;lecture.m4a&quot;, duration=10.0, sample_rate=16000)
 
 # 30 s starting at 5 minutes
-audio, rate = sound_rs.load(&quot;lecture.m4a&quot;, offset=300.0, duration=30.0)</code></pre><div class="note"><b>Windows come from the streaming reader</b><code>offset</code> uses the same frame-accurate seek as the player, so the window starts on the requested sample, and the rest of the file is never decoded.</div>
+audio, rate = sound_rs.load(&quot;lecture.m4a&quot;, offset=300.0, duration=30.0)</code></pre><div class="note"><b>Windows come from the streaming reader</b><code>offset</code> uses packet timestamps and trims leading decoded frames. A bounded duration stops decoding after the requested window; seek accuracy and the work needed to reach it depend on the codec/container.</div>
 <h2 id="memory">Memory</h2>
 <table>
-  <tr><th>Task</th><th>Peak RAM</th></tr>
-  <tr><td>Decode 10 min stereo to float32</td><td class="num">211 MB of audio</td></tr>
-  <tr><td>Decode the same file as 16 kHz mono</td><td class="num">38 MB</td></tr>
-  <tr><td>Stream the same file for playback</td><td class="num">43 MB, independent of length</td></tr>
+  <tr><th>Task</th><th>Sample payload / observation</th></tr>
+  <tr><td>Decode 10 min 44.1 kHz stereo to float32</td><td class="num">About 212 MB of audio</td></tr>
+  <tr><td>Return 10 min as 16 kHz mono</td><td class="num">38.4 MB of returned samples</td></tr>
+  <tr><td>Stream the same file for playback</td><td>Bounded one-second ring plus overhead; historical 43 MB RSS</td></tr>
 </table>
+<p>Returned sample size is not peak RAM: decoding, channel conversion and resampling can
+temporarily retain larger source and destination buffers together.</p>
 <p>Resampling to 16 kHz mono is not just faster downstream — it is 5× less memory than
 keeping 44.1 kHz stereo.</p>
 

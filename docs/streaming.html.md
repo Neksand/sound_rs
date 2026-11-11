@@ -1,6 +1,6 @@
 # Streaming and memory
 
-`play_file` never loads the track. A decoder thread fills a one-second ring buffer, and the audio callback drains it. Memory stays flat no matter how long the file is.
+`play_file` decodes incrementally. A decoder thread fills a one-second ring buffer, and the audio callback drains it. The ring size is independent of file length; container, decoder, resampler and process memory are additional.
 
 ## How it works
 
@@ -14,11 +14,11 @@ When the sample rate changes, the resampler removes its filter delay and drains 
 
 - Seeking replaces the ring buffer and repositions the decoder; the old audio that was still queued is discarded and does not count towards the new position.
 
-Because the decoder runs ahead by at most a second, the first sound arrives as soon as the first packet is decoded, not when the file ends.
+Playback can start before the full file is decoded. Startup still depends on device setup, container probing and any resampler buffering.
 
 ## Numbers
 
-Ten-minute stereo FLAC, 44.1 kHz, measured with `bench/run.py` on an Apple M5 Pro:
+Historical 0.3.0 measurements: ten-minute stereo FLAC, 44.1 kHz, measured with `bench/run.py` on an Apple M5 Pro. These are not current hardware guarantees:
 
 |  | sound_rs | soundfile + sounddevice |
 |---|---|---|
@@ -31,17 +31,17 @@ The competitor number is not a flaw in those libraries: their API takes an array
 
 | You want | Use | Memory |
 |---|---|---|
-| Play a file | Player.play_file | constant, ~1 s of audio |
+| Play a file | Player.play_file | ~1 s ring plus decoder/filter overhead |
 | Analyse the samples | load | whole file as float32 |
-| Play an array you already have | play_array | one copy at device format |
+| Play an array you already have | play_array | copied audio plus conversion temporaries |
 | Play a file, need the samples too | load, then play_array | whole file |
 
-A 10-minute stereo file is 211 MB in float32. That is fine for analysis and wasteful for playback.
+Ten minutes of 44.1 kHz stereo float32 is about 212 MB of sample payload. Decoding and resampling can need additional temporary buffers.
 
 ```
 import sound_rs
 
-# streaming: memory stays flat, start is immediate
+# streaming: bounded playback ring, incremental decode
 with sound_rs.Player() as player:
     player.play_file("lecture-2h.m4a")
     player.wait()
@@ -54,6 +54,6 @@ clips = sound_rs.load_many(["a.flac", "b.flac"])
 
 - `duration` for a streamed file comes from the header; a VBR MP3 without a frame count reports `None` until the decoder reaches the end.
 
-- Seeking in OGG and MP4 is exact; seeking in a stream without an index (rare) may take longer because the decoder has to walk forward.
+- Seeking uses container indexes and trims decoded packets to the requested position. Accuracy and cost depend on the codec/container; an unindexed stream may require walking forward.
 
-- Only playback streams. `load` and `load_many` always decode fully — that is their job.
+- `load` retains its decoded result (or requested window), and `load_many` retains every result in the batch.

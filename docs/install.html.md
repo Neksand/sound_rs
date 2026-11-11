@@ -12,7 +12,7 @@ pip install sound_rs
 
 - Linux x86_64 or aarch64, Windows amd64, macOS arm64 or Intel — all ship wheels.
 
-- NumPy only if you use `play_array`, `load` or `load_many`.
+- NumPy for array playback, loading, writing and recording arrays: install with `pip install 'sound_rs[numpy]'`.
 
 | Platform | Wheel tag | Python |
 |---|---|---|

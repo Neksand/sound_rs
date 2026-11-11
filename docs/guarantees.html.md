@@ -10,8 +10,8 @@ Library failures use `sound_rs.SoundRsError` (a `RuntimeError`) with a stable `.
 |---|---|
 | io | The file could not be opened, read or written. |
 | format | The container or codec was not understood, or no audio was decodable. |
-| device | No output/input device, or the device refused to open. |
-| stalled | Playback made no progress for two seconds; the device probably disappeared. |
+| device | No output/input device, open failure or reported backend fault. |
+| stalled | Playback/feed made no progress, or the recording collector could not keep up. |
 | unsupported | The build lacks a feature (NumPy) or hit a documented limit. |
 | usage | Invalid values, WAV dimensions or call order, for example  feed()  before  begin_feed() . |
 
@@ -19,44 +19,44 @@ Codes are part of the API: renaming one is a breaking change.
 
 ## No panics on bad input
 
-Corrupt files return an error, they do not abort the interpreter. This is enforced in `cargo test` by mutating every committed fixture ~200 times per file (bit flips, truncation, appended noise) and by feeding random bytes; every case must return `Ok` with finite samples or a non-empty error.
+The contract is to report malformed input without a panic crossing the Python boundary. Regression coverage in `cargo test` includes mutating every committed fixture ~200 times per file (bit flips, truncation, appended noise) and by feeding random bytes; every case must return `Ok` with finite samples or a non-empty error. This bounded test corpus is not exhaustive fuzzing or proof that arbitrary untrusted media is safe.
 
 ## Threads and the GIL
 
-- Decoding, playback, recording and `wait()` release the GIL.
+- Bulk decoding/writing, playback waits, feed backpressure and timed capture waits release the GIL. Python array preparation, player joins and device teardown can still hold it.
 
-- One `Player` is one stream: call its methods from one thread at a time.
+- Create, use and destroy each `Player` or `Recorder` on the same thread. Sequential cross-thread use is also invalid.
 
-- Different players can be used from different threads, each with its own device handle.
+- Separate threads can own separate instances, subject to backend/device sharing limits.
 
 ## Determinism
 
-Decoding is deterministic: the same file produces the same float32 samples on every run. Across CPUs the integer decoder's SIMD paths can differ by a bit, so the regression hashes are taken at 10⁻⁴ (about three LSB at 16-bit scale). `tests/decode_regression.py` pins a SHA-256 of the PCM for five fixtures; a decoder change that moves a single sample fails CI.
+`tests/decode_regression.py` checks exact dimensions/rates for six fixtures, SHA-256 hashes of samples rounded to 10⁻⁴ for five, and an RMS tolerance for MP3. Missing fixtures fail the check. These are regression bounds, not a guarantee that every sample change is detected or that decoder output is bit-identical across CPUs and dependency versions.
 
 ## Memory
 
-- Streaming playback uses a one-second ring buffer: memory does not grow with file length (43 MB peak on a 10-minute file, measured).
+- Streaming playback uses a one-second ring; container, decoder, filter and process memory are additional. This bounds playback buffering, not total process RSS.
 
-- `load` allocates the decoded audio once; `load_many` allocates all results at once, so size your batches.
+- `load` retains its result plus decoding/conversion temporaries; `load_many` retains the whole batch. The initial reservation ceiling is not a total decode-memory limit.
 
-- The recorder has a bounded callback ring and stores at most 230 M float32 samples (920 MB payload) on a collector thread; overflow and device errors invalidate the take.
+- Recording limits captured payload to 230 M samples (920 MB), with ring/process overhead additional. `record_to` and `write` also build an encoded WAV buffer.
 
-- A 100-cycle playback soak grows RSS by less than 20 MB (measured: 0.0 MB).
+- Historical streaming and soak RSS measurements are observations on one system; [benchmark results](benchmarks.html) are not memory guarantees.
 
 ## Audio quality
 
 - Resampling uses rubato's FFT resampler: a 20 kHz tone downsampled to 24 kHz is filtered below 10% of its level instead of folding back as an alias.
 
-- Gapless: encoder delay and padding are trimmed for MP3, OGG and AAC/MP4.
+- Encoder-delay/padding metadata is used when available; MP3 decoder paths differ and AAC can retain tail padding. See [format limits](formats.html#gapless).
 
-- WAV and FLAC decode to PCM identical to libsndfile; MP3 matches to 1.6·10⁻⁵ with a 47-sample offset; AAC matches ffmpeg to 8·10⁻⁸.
+- Historical test-corpus comparisons found identical WAV/FLAC PCM, MP3 agreement within 1.6·10⁻⁵ after a 47-sample alignment adjustment, and AAC agreement within 8·10⁻⁸. These are fixture results, not universal codec guarantees.
 
 ## What is not promised
 
 - **A latency figure.** Latency depends on the OS, the device and its buffer; `Player.latency` reports what the backend measured, nothing more.
 
-- **Zero underruns everywhere.** `Player.underruns` counts them; on a loaded machine or a Bluetooth sink they will appear.
+- **Zero glitches or a complete glitch counter.** `Player.underruns` counts ring starvation after playback starts. Callback lock contention produces silence without updating this counter; backend/device glitches are not fully observable.
 
 - **Real-time safety of the Python API.** Calling `feed()` from Python is fine, but Python's scheduler is not a real-time scheduler.
 
-- **Bit-identical output across decoders.** Different MP3 decoders trim delay differently; we match length exactly and samples to 1.6·10⁻⁵.
+- **Bit-identical output across decoders.** Different MP3 decoders trim delay differently; fixture comparisons do not establish equivalence for every file.

@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Overview — sound_rs docs</title>
-<meta name="description" content="sound_rs plays and decodes MP3, FLAC, WAV, OGG and M4A in Python from one wheel, with no ffmpeg, constant memory and ~11 ms to first sound.">
+<meta name="description" content="sound_rs plays, records and decodes audio in Python, with built-in decoders, bounded playback streaming, NumPy arrays and WAV output.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/index.html">
 <link rel="alternate" type="text/markdown" href="index.html.md">
 <link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Overview — sound_rs docs">
-<meta property="og:description" content="sound_rs plays and decodes MP3, FLAC, WAV, OGG and M4A in Python from one wheel, with no ffmpeg, constant memory and ~11 ms to first sound.">
+<meta property="og:description" content="sound_rs plays, records and decodes audio in Python, with built-in decoders, bounded playback streaming, NumPy arrays and WAV output.">
 <meta property="og:type" content="article">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/app.js" defer></script>
@@ -26,14 +26,14 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html" aria-current="page">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html" aria-current="page">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">Python · Rust · macOS / Windows / Linux</p>
 <h1>Audio for Python, without ffmpeg.</h1>
 <p class="lead">sound_rs plays and decodes the formats people actually have — MP3, FLAC, WAV,
-OGG, M4A — from a single wheel. The decoders are compiled in, so there is nothing to install
-besides the package itself.</p>
+OGG, M4A — from a single wheel. The decoders are compiled in; no ffmpeg binary is required.
+Linux needs the ALSA runtime, and array APIs need NumPy.</p>
 
 <div class="figures">
   <div><span>First sound</span><b>11 ms</b><i>on a 10-minute file</i></div>
@@ -41,6 +41,8 @@ besides the package itself.</p>
   <div><span>Import</span><b>1.1 ms</b><i>versus 32 ms for soundfile</i></div>
   <div><span>Platforms</span><b>3</b><i>Linux, Windows, macOS</i></div>
 </div>
+<p>Timing and memory figures above are historical 0.3.0 measurements on one Mac, not device
+guarantees. See the <a href="benchmarks.html">benchmark methodology and limits</a>.</p>
 
 <pre data-lang="bash"><code>pip install sound_rs</code></pre><pre data-lang=""><code>import sound_rs
 
@@ -53,17 +55,18 @@ with sound_rs.Player() as player:
 <ul>
   <li><strong>Playback</strong> of files and NumPy arrays, blocking or through a persistent
       player with pause, seek, volume and position.</li>
-  <li><strong>Streaming decode</strong>: a two-hour file never sits in RAM, and the first
-      sound arrives in milliseconds instead of after a full decode.</li>
+  <li><strong>Streaming decode</strong>: file playback fills a bounded ring incrementally
+      instead of retaining the whole decoded track.</li>
   <li><strong>Decoding to arrays</strong> for analysis, one file at a time or in parallel.</li>
-  <li><strong>Writing</strong> WAV in PCM16, PCM24 or float32; record straight to a file.</li>
-  <li><strong>Metadata</strong> straight from the container header, without decoding the audio.</li>
+  <li><strong>Recording</strong> from an input device to float32 arrays.</li>
+  <li><strong>Writing</strong> WAV in PCM16, PCM24 or float32; save a recorded take in one call.</li>
+  <li><strong>Metadata</strong> from the container header when complete, with decoding as a fallback.</li>
   <li><strong>Typed</strong>: ships <code>sound_rs.pyi</code> and <code>py.typed</code>, so
       editors autocomplete every call.</li>
 </ul>
 
 <h2 id="what-it-does-not">What it does not do</h2>
-<p>No effects, no mixing, and no plugin system. If you need a DAW-style
+<p>No effects, mixing graph or plugin system. If you need a DAW-style
 graph, this is the wrong tool; if you need to play or load audio reliably, it is the right
 one. The <a href="benchmarks.html">benchmark page</a> also says where it is slower than the
 alternatives.</p>
@@ -74,6 +77,7 @@ alternatives.</p>
   <li><a href="quickstart.html">Quickstart</a> — the five things most code does.</li>
   <li><a href="cli.html">Command line</a> — <code>soundrs --help</code> without writing Python.</li>
   <li><a href="player.html">The player</a> — controls, seeking, lifecycle.</li>
+  <li><a href="recording.html">Recording</a> and <a href="writing.html">writing WAV files</a>.</li>
   <li><a href="api.html">API reference</a> — every function and method.</li>
 </ul>
 

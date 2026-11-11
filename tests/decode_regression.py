@@ -9,7 +9,6 @@ output is verified against ffmpeg by hand.
     python3 tests/decode_regression.py --update
 """
 
-import glob
 import hashlib
 import os
 import sys
@@ -44,13 +43,15 @@ def digest(path):
     return rounded.shape[0], rounded.shape[1], rate, hashlib.sha256(rounded.tobytes()).hexdigest()
 
 
-def main():
-    update = "--update" in sys.argv
+def main(argv=None, fixtures=FIXTURES):
+    update = "--update" in (sys.argv[1:] if argv is None else argv)
+    missing = [name for name in sorted(EXPECTED) if not os.path.isfile(os.path.join(fixtures, name))]
+    if missing:
+        print("Missing required decode fixtures: " + ", ".join(missing))
+        return 1
     failures = []
-    for path in sorted(glob.glob(os.path.join(FIXTURES, "*"))):
-        name = os.path.basename(path)
-        if name not in EXPECTED:
-            continue
+    for name in sorted(EXPECTED):
+        path = os.path.join(fixtures, name)
         frames, channels, rate, sha = digest(path)
         want_frames, want_channels, want_rate, want_sha = EXPECTED[name]
         matching = update or sha == want_sha
@@ -67,10 +68,8 @@ def main():
 
     if update:
         print("\nPaste these into EXPECTED:")
-        for path in sorted(glob.glob(os.path.join(FIXTURES, "*"))):
-            name = os.path.basename(path)
-            if name in EXPECTED:
-                print(f'    "{name}": {digest(path)},')
+        for name in sorted(EXPECTED):
+            print(f'    "{name}": {digest(os.path.join(fixtures, name))},')
         return 0
 
     if failures:

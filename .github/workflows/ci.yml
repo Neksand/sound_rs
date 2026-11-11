@@ -36,17 +36,38 @@ jobs:
       - run: cargo test --all-targets
 
   python:
-    runs-on: ubuntu-latest
+    # Exercise the Python/NumPy boundary on each OS, plus both supported ABI
+    # endpoints. Rust-only tests do not cover extension loading or array layout.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: windows-latest
+            python: "3.12"
+          - os: macos-15
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      SOUND_RS_PLAY: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-      - run: pip install maturin numpy
-      - run: maturin build --release -o dist
-      - run: pip install --no-deps dist/*.whl
+      - name: ALSA headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - run: python -m pip install maturin numpy
+      - run: maturin build --release --locked -o dist
+      - run: python -m pip install --force-reinstall --no-deps --no-index --find-links dist sound_rs
       - run: python tests/smoke.py
       - run: python tests/decode_regression.py
       - run: python -m unittest discover -s tests -p "test_*.py" -v
@@ -58,4 +79,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 docs/_build.py
+      - run: python3 docs/check_api.py
+      - run: python3 docs/check_site.py
       - run: git diff --exit-code docs/

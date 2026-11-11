@@ -6,6 +6,7 @@ polluting each other. Each worker prints one JSON line and exits.
 
     python bench/run.py                        # full report
     python bench/run.py --compare              # + competitors
+    python bench/run.py --no-audio             # decode-only, no sound devices
     python bench/run.py --reps 15 --report bench/REPORT.md
     python bench/run.py --baseline bench/results-0.2.2.json
     python bench/run.py --python /path/to/venv/bin/python
@@ -30,6 +31,7 @@ RATE = 44100
 SIZES = {"short": 3.0, "long": 600.0}
 REPS = 10
 WARMUP = 1
+WORKER_TIMEOUT = 300.0
 
 
 # --------------------------------------------------------------------------
@@ -96,7 +98,7 @@ def summarise(seconds, cpu=None, peak=None, extras=None):
 # corpus
 
 
-def build_corpus():
+def build_corpus(timeout=WORKER_TIMEOUT):
     os.makedirs(CORPUS, exist_ok=True)
     import math as _math
     import wave
@@ -130,6 +132,7 @@ def build_corpus():
                     subprocess.run(
                         ["ffmpeg", "-y", "-loglevel", "error", "-i", wav, *args, out],
                         check=True,
+                        timeout=timeout,
                     )
                 files[f"{name}.{ext}"] = out
     return files
@@ -322,33 +325,50 @@ def resource_peak_mb():
     return usage / (1024 * 1024) if sys.platform == "darwin" else usage / 1024
 
 
-def spawn(kind, target="", extra="", python=None):
+def spawn(kind, target="", extra="", python=None, timeout=WORKER_TIMEOUT):
     command = [python or sys.executable, os.path.abspath(__file__), "--worker", kind, target]
     if extra:
         command.append(extra)
-    completed = subprocess.run(command, capture_output=True, text=True)
-    if completed.returncode != 0:
-        return None
-    line = completed.stdout.strip().splitlines()[-1]
     try:
-        return json.loads(line)
-    except json.JSONDecodeError:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as error:
+        print(f"benchmark {kind}: {error}", file=sys.stderr)
+        return None
+    if completed.returncode != 0:
+        detail = completed.stderr.strip().splitlines()
+        print(f"benchmark {kind}: worker failed ({completed.returncode})"
+              + (f": {detail[-1]}" if detail else ""), file=sys.stderr)
+        return None
+    lines = completed.stdout.strip().splitlines()
+    try:
+        result = json.loads(lines[-1]) if lines else None
+        if not isinstance(result, dict) or not isinstance(result.get("seconds"), (int, float)):
+            raise ValueError("missing numeric seconds")
+        if not math.isfinite(result["seconds"]) or result["seconds"] < 0:
+            raise ValueError("invalid worker timing")
+        return result
+    except (ValueError, TypeError) as error:
+        print(f"benchmark {kind}: invalid worker output ({error})", file=sys.stderr)
         return None
 
 
-def measure(kind, target="", extra="", reps=REPS, python=None):
-    """Warmup, then `reps` measured runs. Returns summary stats or None."""
+def measure(kind, target="", extra="", reps=REPS, python=None, timeout=WORKER_TIMEOUT):
+    """Warmup, then all requested runs; a failed run invalidates the summary."""
+    if reps < 1:
+        raise ValueError("reps must be positive")
     for _ in range(WARMUP):
-        if spawn(kind, target, extra, python) is None:
+        if spawn(kind, target, extra, python, timeout) is None:
             return None
-    runs = [spawn(kind, target, extra, python) for _ in range(reps)]
-    runs = [run for run in runs if run is not None]
-    if not runs:
-        return None
+    runs = []
+    for _ in range(reps):
+        run = spawn(kind, target, extra, python, timeout)
+        if run is None:
+            return None
+        runs.append(run)
 
     seconds = [run["seconds"] for run in runs]
     cpu = [run["cpu"] for run in runs if "cpu" in run]
-    peak = [run["peak_mb"] for run in runs if run.get("peak_mb")]
+    peak = [run["peak_mb"] for run in runs if run.get("peak_mb") is not None]
     extras = {
         key: value
         for key, value in runs[-1].items()
@@ -395,11 +415,17 @@ def main():
     parser.add_argument("--worker", nargs="+", help=argparse.SUPPRESS)
     parser.add_argument("--compare", action="store_true", help="also measure competitors")
     parser.add_argument("--reps", type=int, default=REPS)
+    parser.add_argument("--no-audio", action="store_true", help="skip every playback, streaming and soak scenario")
+    parser.add_argument("--timeout", type=float, default=WORKER_TIMEOUT, help="maximum seconds per worker or corpus encoder (default: 300)")
     parser.add_argument("--report", help="write a markdown report to this path")
     parser.add_argument("--baseline", help="compare against a previous results.json")
     parser.add_argument("--python", help="interpreter to run workers with")
     parser.add_argument("--out", default=os.path.join(HERE, "results.json"))
     args = parser.parse_args()
+    if args.reps < 1:
+        parser.error("--reps must be positive")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be a positive finite number")
 
     if args.worker:
         kind, *rest = args.worker
@@ -418,7 +444,7 @@ def main():
         with open(args.baseline) as handle:
             baseline = json.load(handle)["scenarios"]
 
-    files = build_corpus()
+    files = build_corpus(timeout=args.timeout)
     machine = platform.processor() or platform.machine()
     print(
         f"\nsound_rs benchmark — {machine}, {platform.system()} {platform.release()}, "
@@ -432,9 +458,11 @@ def main():
     # import
     print("\nimport time (cold process)")
     for module in ["sound_rs", "soundfile", "sounddevice"]:
+        if args.no_audio and module == "sounddevice":
+            continue
         if module != "sound_rs" and not (args.compare and available(module)):
             continue
-        stats = measure("import", module, reps=max(3, args.reps), python=args.python)
+        stats = measure("import", module, reps=max(3, args.reps), python=args.python, timeout=args.timeout)
         if stats:
             record("import", module, stats)
             line("import", module, stats, baseline)
@@ -442,8 +470,8 @@ def main():
     # metadata and decode
     print("\nmetadata / decode")
     for name, path in sorted(files.items()):
-        meta = measure("metadata", path, reps=args.reps, python=args.python)
-        dec = measure("decode", path, reps=args.reps, python=args.python)
+        meta = measure("metadata", path, reps=args.reps, python=args.python, timeout=args.timeout)
+        dec = measure("decode", path, reps=args.reps, python=args.python, timeout=args.timeout)
         if dec:
             record(f"decode:{name}", "sound_rs", dec)
             line(f"decode:{name}", name, dec, baseline)
@@ -452,15 +480,15 @@ def main():
 
         if args.compare:
             if available("soundfile"):
-                sf_meta = measure("metadata_sf", path, reps=args.reps, python=args.python)
-                sf_dec = measure("decode_sf", path, reps=args.reps, python=args.python)
+                sf_meta = measure("metadata_sf", path, reps=args.reps, python=args.python, timeout=args.timeout)
+                sf_dec = measure("decode_sf", path, reps=args.reps, python=args.python, timeout=args.timeout)
                 if sf_meta:
                     record(f"metadata:{name}", "soundfile", sf_meta)
                 if sf_dec:
                     record(f"decode:{name}", "soundfile", sf_dec)
                     line(f"decode:{name}", "soundfile", sf_dec)
             if dec:
-                pcm = spawn("pcm", path, python=args.python)
+                pcm = spawn("pcm", path, python=args.python, timeout=args.timeout)
                 if pcm:
                     detail = (
                         "identical"
@@ -471,72 +499,75 @@ def main():
                         detail += f", offset {pcm['lag']} samples"
                     print(f"  {'':<12} PCM {detail}  frames {pcm['frames']}")
 
-    # playback
-    print("\nplayback, 3 s tone")
-    for kind, variant in [
-        ("play_overhead", "one-shot"),
-        ("play_overhead_player", "player"),
-    ]:
-        stats = measure(kind, extra="3.0", reps=3, python=args.python)
-        if stats:
-            record("playback", variant, stats)
-            overhead = stats.get("play_seconds", stats["median"]) - 3.0
-            print(
-                f"  {variant:<12} {fmt_seconds(stats):>9}  overhead {overhead:+.3f} s"
-                f"  p95 {fmt_seconds(stats, 'p95')}"
-            )
-    if args.compare and available("sounddevice"):
-        stats = measure("play_overhead_sd", extra="3.0", reps=3, python=args.python)
-        if stats:
-            record("playback", "sounddevice", stats)
-            print(
-                f"  {'sounddevice':<12} {fmt_seconds(stats):>9}"
-                f"  overhead {stats['median'] - 3.0:+.3f} s"
-                f"  p95 {fmt_seconds(stats, 'p95')}"
-            )
-
-    # streaming
-    long_path = files.get("long.flac") or files.get("long.wav")
-    if long_path:
-        print(f"\nstreaming {os.path.basename(long_path)}")
-        first = measure("first_sound", long_path, reps=3, python=args.python)
-        if first:
-            record("first_sound", "sound_rs", first)
-            print(
-                f"  {'player':<12} first sound {fmt_seconds(first, 'first_sound'):>9}"
-                f"  rss {first.get('peak_mb', 0):.0f}MB"
-            )
-        stream = measure("stream", long_path, extra="5", reps=3, python=args.python)
-        if stream:
-            record("stream", "sound_rs", stream)
-            print(
-                f"  {'rtf':<12} {stream.get('rtf', 0):.2f}x realtime"
-                f"  underruns {stream.get('underruns', 0)}"
-            )
-        if args.compare and available("sounddevice") and available("soundfile"):
-            first_sf = measure("first_sound_sf", long_path, reps=3, python=args.python)
-            if first_sf:
-                record("first_sound", "soundfile+sounddevice", first_sf)
+    if args.no_audio:
+        print("\naudio scenarios skipped (--no-audio)")
+    else:
+        # playback
+        print("\nplayback, 3 s tone")
+        for kind, variant in [
+            ("play_overhead", "one-shot"),
+            ("play_overhead_player", "player"),
+        ]:
+            stats = measure(kind, extra="3.0", reps=3, python=args.python, timeout=args.timeout)
+            if stats:
+                record("playback", variant, stats)
+                overhead = stats.get("play_seconds", stats["median"]) - 3.0
                 print(
-                    f"  {'soundfile+sd':<12} first sound"
-                    f" {fmt_seconds(first_sf, 'first_sound'):>9}"
-                    f"  rss {first_sf.get('peak_mb', 0):.0f}MB"
+                    f"  {variant:<12} {fmt_seconds(stats):>9}  overhead {overhead:+.3f} s"
+                    f"  p95 {fmt_seconds(stats, 'p95')}"
                 )
+        if args.compare and available("sounddevice"):
+            stats = measure("play_overhead_sd", extra="3.0", reps=3, python=args.python, timeout=args.timeout)
+            if stats:
+                record("playback", "sounddevice", stats)
+                print(
+                    f"  {'sounddevice':<12} {fmt_seconds(stats):>9}"
+                    f"  overhead {stats['median'] - 3.0:+.3f} s"
+                    f"  p95 {fmt_seconds(stats, 'p95')}"
+                )
+
+        # streaming
+        long_path = files.get("long.flac") or files.get("long")
+        if long_path:
+            print(f"\nstreaming {os.path.basename(long_path)}")
+            first = measure("first_sound", long_path, reps=3, python=args.python, timeout=args.timeout)
+            if first:
+                record("first_sound", "sound_rs", first)
+                print(
+                    f"  {'player':<12} first sound {fmt_seconds(first, 'first_sound'):>9}"
+                    f"  rss {first.get('peak_mb', 0):.0f}MB"
+                )
+            stream = measure("stream", long_path, extra="5", reps=3, python=args.python, timeout=args.timeout)
+            if stream:
+                record("stream", "sound_rs", stream)
+                print(
+                    f"  {'rtf':<12} {stream.get('rtf', 0):.2f}x realtime"
+                    f"  underruns {stream.get('underruns', 0)}"
+                )
+            if args.compare and available("sounddevice") and available("soundfile"):
+                first_sf = measure("first_sound_sf", long_path, reps=3, python=args.python, timeout=args.timeout)
+                if first_sf:
+                    record("first_sound", "soundfile+sounddevice", first_sf)
+                    print(
+                        f"  {'soundfile+sd':<12} first sound"
+                        f" {fmt_seconds(first_sf, 'first_sound'):>9}"
+                        f"  rss {first_sf.get('peak_mb', 0):.0f}MB"
+                    )
 
     # batch
     flacs = ",".join(p for n, p in sorted(files.items()) if n.endswith(".flac"))
     if flacs:
         print(f"\nbatch decode ({len(flacs.split(','))} FLAC files)")
-        batch = measure("batch", extra=flacs, reps=3, python=args.python)
+        batch = measure("batch", extra=flacs, reps=3, python=args.python, timeout=args.timeout)
         if batch:
             record("batch", "sound_rs", batch)
             print(f"  {'load_many':<12} {fmt_seconds(batch)}")
         if args.compare and available("soundfile"):
-            batch_sf = measure("batch_sf", extra=flacs, reps=3, python=args.python)
+            batch_sf = measure("batch_sf", extra=flacs, reps=3, python=args.python, timeout=args.timeout)
             if batch_sf:
                 record("batch", "soundfile", batch_sf)
                 print(f"  {'soundfile':<12} {fmt_seconds(batch_sf)}")
-        scaling = measure("batch_scaling", extra=flacs, reps=1, python=args.python)
+        scaling = measure("batch_scaling", extra=flacs, reps=1, python=args.python, timeout=args.timeout)
         if scaling and "scaling" in scaling:
             parts = [
                 f"{threads} thr {seconds * 1000:.0f} ms"
@@ -544,15 +575,16 @@ def main():
             ]
             print("  scaling      " + ", ".join(parts))
 
-    # soak
-    soak = measure("soak", extra="200", reps=1, python=args.python)
-    if soak:
-        record("soak", "sound_rs", soak)
-        print(
-            f"\nsoak          200 play cycles, RSS {soak.get('rss_start', 0):.0f}"
-            f" -> {soak.get('rss_end', 0):.0f} MB"
-            f" (growth {soak.get('rss_growth', 0):+.1f} MB)"
-        )
+    if not args.no_audio:
+        # soak
+        soak = measure("soak", extra="200", reps=1, python=args.python, timeout=args.timeout)
+        if soak:
+            record("soak", "sound_rs", soak)
+            print(
+                f"\nsoak          200 play cycles, RSS {soak.get('rss_start', 0):.0f}"
+                f" -> {soak.get('rss_end', 0):.0f} MB"
+                f" (growth {soak.get('rss_growth', 0):+.1f} MB)"
+            )
 
     payload = {
         "meta": {
@@ -561,6 +593,9 @@ def main():
             "system": f"{platform.system()} {platform.release()}",
             "python": platform.python_version(),
             "reps": args.reps,
+            "audio_enabled": not args.no_audio,
+            "worker_timeout": args.timeout,
+            "skipped_scenarios": ["playback", "first_sound", "stream", "soak"] if args.no_audio else [],
         },
         "scenarios": results,
     }

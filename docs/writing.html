@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Writing WAV files — sound_rs docs</title>
+<meta name="description" content="Write frames-first float32 arrays as PCM16, PCM24 or float32 WAV; understand clipping, validation, errors and memory limits.">
+<link rel="canonical" href="https://neksand.github.io/sound_rs/writing.html">
+<link rel="alternate" type="text/markdown" href="writing.html.md">
+<link rel="describedby" href="llms.txt">
+<meta property="og:title" content="Writing WAV files — sound_rs docs">
+<meta property="og:description" content="Write frames-first float32 arrays as PCM16, PCM24 or float32 WAV; understand clipping, validation, errors and memory limits.">
+<meta property="og:type" content="article">
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <a class="brand" href="index.html">sound_rs</a>
+  <span class="ver">v0.4.0</span>
+  <nav aria-label="External">
+    <button type="button" data-search>Search <kbd>/</kbd></button>
+    <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+    <a href="https://github.com/Neksand/sound_rs">GitHub</a>
+  </nav>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html" aria-current="page">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <main id="main">
+
+<p class="kicker">10 · Guides</p>
+<h1>Writing WAV files</h1>
+<p class="lead"><code>write</code> saves a float32 array as a WAV file. It accepts the
+<code>(frames, channels)</code> layout returned by <code>load</code>, or a one-dimensional
+mono array. It requires NumPy.</p>
+
+<pre data-lang=""><code>import sound_rs
+
+audio, rate = sound_rs.load(&quot;source.flac&quot;)
+sound_rs.write(&quot;copy.wav&quot;, audio, rate, subtype=&quot;pcm24&quot;)</code></pre>
+<h2 id="subtypes">Subtypes and sample values</h2>
+<table>
+  <tr><th>Subtype</th><th>Encoding</th><th>Bytes per sample</th></tr>
+  <tr><td class="num">pcm16</td><td>Signed 16-bit PCM (default)</td><td class="num">2</td></tr>
+  <tr><td class="num">pcm24</td><td>Signed 24-bit PCM</td><td class="num">3</td></tr>
+  <tr><td class="num">float32</td><td>32-bit IEEE float</td><td class="num">4</td></tr>
+</table>
+<p>All three accept finite float32 samples and clip values outside −1…1. Integer PCM
+quantizes the samples; no dither is added. Strided and read-only arrays are accepted through
+a checked copy. Float64 input is rejected rather than converted silently.</p>
+
+<h2 id="errors">Validation and errors</h2>
+<p>The destination must have a <code>.wav</code> extension, the rate must be positive, and
+the channel count and byte rate must fit the WAV header. Invalid values or unsupported
+subtypes raise <code>SoundRsError(code="usage")</code> before opening the destination.
+File creation/write failures use <code>code="io"</code>; Python dtype or integer conversion
+can raise <code>TypeError</code> or <code>OverflowError</code>.</p>
+<p>An existing destination is overwritten. Writes are not atomic: an I/O failure can leave
+an incomplete file. The format is classic RIFF WAV, not RF64; files beyond its size limits
+are rejected.</p>
+
+<h2 id="recording">Saving a recording</h2>
+<pre data-lang=""><code>import sound_rs
+
+with sound_rs.Recorder() as recorder:
+    recorder.record_to(&quot;take.wav&quot;, 5.0, subtype=&quot;pcm16&quot;)</code></pre>
+<p><code>record_to</code> captures into memory and then calls the WAV writer. It does not
+stream samples to disk while recording. See <a href="recording.html#limits">capture limits</a>.</p>
+
+<h2 id="memory">Memory and concurrency</h2>
+<p>The writer copies the input and builds the complete encoded WAV buffer before writing it.
+Budget for the array, copied samples and encoded bytes together. Encoding and file I/O release
+the GIL after Python array preparation. Incremental writing and compressed output are not implemented.</p>
+
+<div class="next"><a href="recording.html">← Recording</a><a href="migration.html">Coming from another library →</a></div>
+  </main>
+  <aside class="toc"><h2>On this page</h2><a href="#subtypes">Subtypes and sample values</a><a href="#errors">Validation and errors</a><a href="#recording">Saving a recording</a><a href="#memory">Memory and concurrency</a></aside>
+</div>
+<footer>
+  <span>sound_rs v0.4.0 — MIT</span>
+  <a href="https://github.com/Neksand/sound_rs">Source</a>
+  <a href="https://pypi.org/project/sound-rs/">PyPI</a>
+  <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
+  <span class="spacer">Built without a build step</span>
+</footer>
+<dialog class="search" aria-label="Search documentation">
+  <input type="search" placeholder="Search docs — player, seek, flac, numpy…" aria-label="Search">
+  <ul></ul>
+</dialog>
+</body>
+</html>

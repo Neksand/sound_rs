@@ -1,6 +1,6 @@
 # Benchmarks
 
-Numbers with the method next to them, including the rows where the library is slower.
+Historical 0.3.0 measurements with the method next to them, including rows where the library is slower. These device measurements were not rerun during the current headless engineering validation and are not performance guarantees.
 
 ## Method
 

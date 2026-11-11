@@ -50,11 +50,16 @@ jobs:
           sudo apt-get install -y libasound2t64 \
             || sudo apt-get install -y libasound2 \
             || true  # the import check below is what actually proves it
-      - name: Smoke test wheel
+      - name: Validate wheel API and samples
         shell: bash
+        env:
+          SOUND_RS_PLAY: "0"
         run: |
+          python -m pip install numpy
           python -m pip install --force-reinstall --no-deps --no-index --find-links dist sound_rs
-          python -c "import sound_rs; print(sorted(n for n in dir(sound_rs) if not n.startswith('_')))"
+          python tests/smoke.py
+          python tests/decode_regression.py
+          python -m unittest discover -s tests -p "test_*.py" -v
 
   sdist:
     needs: test

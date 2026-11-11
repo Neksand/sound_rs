@@ -26,25 +26,26 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html" aria-current="page">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html" aria-current="page">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">06 · Guides</p>
 <h1>Formats and gapless</h1>
-<p class="lead">Five container families, every common bit depth, and gapless trimming for the
-lossy ones.</p>
+<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis and AAC-in-MP4 decoding, with
+encoder-delay trimming where metadata is available.</p>
 
 <h2 id="supported">Supported formats</h2>
 <table>
   <tr><th>Format</th><th>Extensions</th><th>Decoder</th><th>Notes</th></tr>
-  <tr><td>WAV / AIFF</td><td class="num">.wav</td><td>symphonia</td><td>PCM 8/16/24/32-bit float and integer</td></tr>
-  <tr><td>FLAC</td><td class="num">.flac</td><td>symphonia</td><td>16/24-bit, any sample rate</td></tr>
-  <tr><td>MP3</td><td class="num">.mp3</td><td>minimp3</td><td>~45% faster than the symphonia decoder</td></tr>
+  <tr><td>WAV</td><td class="num">.wav</td><td>symphonia</td><td>PCM, including tested 24-bit and multichannel files</td></tr>
+  <tr><td>FLAC</td><td class="num">.flac</td><td>symphonia</td><td>Lossless decode; supported codec layouts/rates</td></tr>
+  <tr><td>MP3</td><td class="num">.mp3</td><td>minimp3 / symphonia</td><td>Full-file load uses minimp3; bytes/windows/streaming use Symphonia</td></tr>
   <tr><td>OGG Vorbis</td><td class="num">.ogg</td><td>symphonia</td><td>—</td></tr>
   <tr><td>AAC in MP4</td><td class="num">.m4a, .mp4</td><td>symphonia</td><td>priming read from the edit list</td></tr>
 </table>
-<p>There is no extension allowlist: whatever the probe understands is accepted. A file with
-the wrong extension but valid contents still opens.</p>
+<p>There is no extension allowlist. Probing recognizes containers; a successful probe does
+not prove that every codec or packet inside is supported. Raw AAC and other containers need
+dedicated validation before relying on them.</p>
 
 <h2 id="gapless">Gapless</h2>
 <p>Lossy encoders add silence at both ends — a few thousand samples that are not part of the
@@ -55,36 +56,41 @@ sound_rs trims them:</p>
   <li><strong>AAC in MP4</strong> records the priming in an edit list that symphonia parses
       but does not expose, so the library reads the <code>elst</code> box itself.</li>
 </ul>
-<p>The result matches other decoders: a 60-second AAC file decodes to 2 646 016 frames and
-agrees with ffmpeg to 8·10⁻⁸ across the whole file.</p>
+<p>Historical comparison: a 60-second AAC file decoded to 2 646 016 frames and agreed with
+ffmpeg to 8·10⁻⁸. AAC can retain less than one codec frame of tail padding; these measurements
+do not guarantee exact alignment for every file.</p>
 
 <pre data-lang=""><code>import sound_rs, soundfile
 
 ours, _ = sound_rs.load(&quot;track.flac&quot;)
 theirs, _ = soundfile.read(&quot;track.flac&quot;, dtype=&quot;float32&quot;)
-print(ours.shape == theirs.shape, abs(ours - theirs).max())   # (True, 0.0)</code></pre><div class="warn"><b>MP3 is offset by 47 samples</b>Against libsndfile and ffmpeg, MP3 output starts 47 samples (~1 ms) earlier, because decoders trim the encoder delay differently. Lengths match exactly and sample values agree to 1.6·10⁻⁵ once aligned. It is inaudible; it matters if you compare PCM sample-by-sample across libraries.</div>
+print(ours.shape == theirs.shape, abs(ours - theirs).max())   # (True, 0.0)</code></pre><div class="warn"><b>MP3 is offset by 47 samples</b>The tested full-file MP3 path starts 47 samples (~1 ms) earlier than libsndfile and ffmpeg. The measured fixture lengths match and samples agree to 1.6·10⁻⁵ once aligned. Bytes, windowed and streamed MP3 use a different decoder; do not assume sample identity or alignment across these paths.</div>
 <h2 id="depth">Bit depth</h2>
 <p>Everything is converted to float32 on decode. 24-bit files keep their resolution; there is
 no silent truncation to 16-bit anywhere in the path. On output the device decides the sample
 format — f32, f64, i16, i32, u8 or u16 — and conversion happens in the callback.</p>
 
 <h2 id="errors">When a file will not open</h2>
-<p>All failures raise <code>sound_rs.SoundRsError</code>, a <code>RuntimeError</code> subclass.</p>
+<p>Library failures raise <code>sound_rs.SoundRsError</code>, a <code>RuntimeError</code>
+subclass. Python argument conversion can instead raise <code>TypeError</code> or
+<code>OverflowError</code>.</p>
 <pre data-lang=""><code>import sound_rs
 
 try:
     sound_rs.play_audio(&quot;broken.mp3&quot;)
 except sound_rs.SoundRsError as error:
     print(error)   # Unsupported or corrupt audio file &#x27;broken.mp3&#x27;: ...</code></pre>
-<p>Decoding stops at the first corrupt packet rather than returning truncated audio, except
-for a file that ends early: a truncated tail is played up to the last good packet.</p>
+<p>Decoder errors normally fail the call. Unexpected end-of-file can return a decodable
+prefix, so a successful decode is not strict proof that the source file was complete.</p>
 
 <h2 id="probe">Checking without decoding</h2>
 <pre data-lang=""><code>import sound_rs
 
 sound_rs.is_supported_format(&quot;maybe.mp3&quot;)   # True / False, header only
 sound_rs.get_audio_info(&quot;maybe.mp3&quot;)        # (rate, channels, seconds)</code></pre>
-<p>Neither call decodes the audio, so both stay around a millisecond on a two-hour file.</p>
+<p><code>is_supported_format</code> probes without decoding. <code>get_audio_info</code>
+uses complete header metadata when available, decodes a packet to discover missing format
+details, or decodes the file to determine an unknown duration. Its cost can grow with file length.</p>
 
 <div class="next"><a href="streaming.html">← Streaming and memory</a><a href="numpy.html">NumPy and arrays →</a></div>
   </main>

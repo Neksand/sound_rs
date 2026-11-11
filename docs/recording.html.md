@@ -21,12 +21,12 @@ recorder = sound_rs.Recorder(device="MacBook Pro Microphone")
 print(recorder.device, recorder.sample_rate, recorder.channels)
 ```
 
-The rate and channel count are whatever the device reports; the library does not resample on input. If you need 16 kHz mono, ask for it after the fact:
+The rate and channel count are whatever the device reports; the library does not resample on input. Folding to mono does not change the rate:
 
 ```
 import sound_rs
 
-mono = audio.mean(axis=1, keepdims=True)     # or use numpy's resampler of choice
+mono = audio.mean(axis=1, keepdims=True)     # still at the captured sample rate
 ```
 
 ## start and stop
@@ -42,21 +42,14 @@ audio, rate = recorder.stop()
 
 ## Writing a WAV
 
-The arrays are plain float32, so the standard library writes them:
+Use the same frames-first float32 layout as `load`:
 
 ```
-import wave
-import numpy as np
 import sound_rs
 
-audio, rate = sound_rs.Recorder().record(3.0)
-pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2")
-
-with wave.open("take.wav", "w") as handle:
-    handle.setnchannels(audio.shape[1])
-    handle.setsampwidth(2)
-    handle.setframerate(rate)
-    handle.writeframes(pcm.tobytes())
+with sound_rs.Recorder() as recorder:
+    audio, rate = recorder.record(3.0)
+sound_rs.write("take.wav", audio, rate, subtype="pcm16")
 ```
 
 ## Saving a take
@@ -68,7 +61,7 @@ with sound_rs.Recorder() as recorder:
     recorder.record_to("take.wav", 5.0, subtype="pcm24")
 ```
 
-For anything else — resampling, trimming, writing a different name — record to an array and use `sound_rs.write`, which writes the same `(frames, channels)` layout that `load` returns.
+`record_to` captures the take in memory, then writes it; it is not incremental disk recording. For preprocessing or another destination, record to an array and use `sound_rs.write`, which writes the same `(frames, channels)` layout that `load` returns.
 
 ```
 import sound_rs
@@ -79,9 +72,11 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
 
 ## Limits
 
-- The capture starts when the device delivers its first buffer. On Bluetooth headsets that is 100–150 ms, so a short take can be that much shorter than requested — the recorder never adds frames to hide it.
+- Create, use and destroy the recorder on its original thread.
 
-- The callback writes to a bounded input ring (normally one second, at most 4 MiB). A collector thread stores the take outside the audio callback. The recording limit remains 230 M float32 samples (920 MB of payload, roughly 40 minutes at 48 kHz stereo). This is not a cap on total process memory.
+- Capture starts when the device delivers its first buffer. Startup latency can make a timed take shorter than requested; the recorder does not add frames to hide it.
+
+- The callback writes to a bounded input ring (normally one second, at most 4 MiB). A collector thread stores the take outside the audio callback. The recording limit remains 230 M float32 samples (920 MB of payload, roughly 40 minutes at 48 kHz stereo). This is not a cap on total process memory or a hard real-time guarantee.
 
 - Input overflow invalidates the take with `code="stalled"`, the storage limit or allocation failure uses `unsupported`, and a backend failure uses `device`. The library does not return a successful partial take after these faults. `stop()` drains the final callback and joins the collector with the GIL released.
 
@@ -89,4 +84,4 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
 
 - No resampling, mixing or effects on input — capture is raw device audio.
 
-- Duplex (playing while recording) works because they are separate streams, but they are independent objects with independent device handles.
+- Playback and recording use independent streams. Simultaneous access depends on backend and device support; there is no shared clock or synchronization guarantee.

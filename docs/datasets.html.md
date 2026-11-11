@@ -44,11 +44,13 @@ audio, rate = sound_rs.load("lecture.m4a", offset=300.0, duration=30.0)
 
 ## Memory
 
-| Task | Peak RAM |
+| Task | Sample payload / observation |
 |---|---|
-| Decode 10 min stereo to float32 | 211 MB of audio |
-| Decode the same file as 16 kHz mono | 38 MB |
-| Stream the same file for playback | 43 MB, independent of length |
+| Decode 10 min 44.1 kHz stereo to float32 | About 212 MB of audio |
+| Return 10 min as 16 kHz mono | 38.4 MB of returned samples |
+| Stream the same file for playback | Bounded one-second ring plus overhead; historical 43 MB RSS |
+
+Returned sample size is not peak RAM: decoding, channel conversion and resampling can temporarily retain larger source and destination buffers together.
 
 Resampling to 16 kHz mono is not just faster downstream — it is 5× less memory than keeping 44.1 kHz stereo.
 

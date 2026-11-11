@@ -9,7 +9,7 @@ player = sound_rs.Player()                 # opens the default device
 player.play_file("first.flac")             # returns immediately
 player.wait()
 
-player.play_file("second.mp3")             # no device setup, starts at once
+player.play_file("second.mp3")             # reuses the open device
 player.stop()
 del player                                 # closes the stream
 ```
@@ -21,7 +21,7 @@ del player                                 # closes the stream
 | idle | Stream open, nothing loaded | play_file ,  play_array |
 | playing | Callback writes audio | pause ,  stop , end of source |
 | paused | Callback writes silence, position frozen | resume ,  stop |
-| finished | Source exhausted, stream still open | play_* ,  resume  (replays) |
+| finished | Source exhausted, stream still open | Start another source; a retained file/array can resume, a finished feed must restart |
 
 ## Controls
 
@@ -30,15 +30,15 @@ del player                                 # closes the stream
 | play_file(path) | Streams a file from disk. Returns immediately. |
 | play_array(arr, rate) | Plays an in-memory array; resampled to the device once, up front. |
 | pause() | Stops producing sound and freezes  position . |
-| resume() | Continues from the paused position, or replays from the start if finished. |
-| stop() | Clears the source and queue, rewinds to zero, keeps the stream open. Start a new source before resume/seek. |
+| resume() | Continues an active source or replays a retained finished file/array. A stopped source or finished feed must restart. |
+| stop() | Clears the source and queue, resets position, keeps the device stream open. |
 | seek(seconds) | Jumps; works while paused. |
-| wait() | Waits through the final audio drain (GIL released); returns while paused with the queue intact. |
-| del player | Stops the decoder and closes the stream (or use  with ). |
+| wait() | Waits for completion/drain, or returns when paused/stopped (GIL released). |
+| del player | Releases this reference; destroying the object stops the decoder and closes the stream. |
 
 ## Seeking
 
-Seeking a streamed file is accurate to the frame. Containers can only seek to a packet boundary, so the player reads the packet's real timestamp and drops the difference. A seek to `0.5` in a 16 kHz file lands on frame 8000, not on the nearest packet start.
+Seeking uses packet timestamps and drops decoded frames before the requested position. The source must be a file or an array, and the time finite; paused seeks preserve pause intent. Codec/container support determines positioning accuracy and seek cost.
 
 Seeking preserves pause and queued files. Non-finite positions raise `SoundRsError(code="usage")`; a fed stream or stopped player cannot seek. After natural file completion, seek or resume restarts the current file, including the last file reached through a queue.
 
@@ -71,9 +71,7 @@ print(player.is_playing)   # True
 
 ## Queue
 
-`enqueue` lines up the next file; when the current one ends the decoder opens it and continues on the same stream. Rate and channel count may differ between tracks.
-
-A queue requires a file source started with `play_file()`. Enqueuing on an idle, array or fed player raises `usage` instead of creating a queue that cannot advance.
+`enqueue` requires an active file source started with `play_file`; array/feed modes reject it. When the current file ends, the decoder opens the next and continues on the same stream. Rate and channel count may differ between tracks. Pausing preserves the queue.
 
 ```
 with sound_rs.Player() as player:
@@ -105,9 +103,9 @@ player.wait()
 
 ## Threading and the GIL
 
-Playback and decoding run on Rust threads; decoding, feeding and `wait()` release the GIL. Control methods can briefly join a decoder or query metadata while holding it. `player.wait()` in the main thread does not block an `asyncio` loop running in another thread, and `threading.Thread(target=sound_rs.play_audio, ...)` works as expected.
+File decoding runs on a Rust worker. Playback waits and feed backpressure release the GIL, so other Python threads can run. Array conversion/resampling, metadata queries, player shutdown joins and device setup/teardown can still hold it. Calling `wait()` on an event-loop thread still blocks that loop until playback completes.
 
-One player is one stream. Do not call methods on the same player from several threads at once; create one player per thread instead.
+Create, use and destroy each `Player` or `Recorder` on the same thread. Even sequential use from a different thread is invalid. Separate threads may own separate instances; a worker may call `sound_rs.play_audio` because that function creates and disposes its own player there.
 
 ## Device selection
 
@@ -119,4 +117,4 @@ player = sound_rs.Player(device="MacBook Pro Speakers")
 print(player.device, player.sample_rate, player.channels)
 ```
 
-The device is opened once, at construction. A backend failure is signaled atomically and reported as `SoundRsError(code="device")`; create a new Player to reopen it. The no-progress watchdog separately reports `stalled`. This is fault reporting, not automatic reconnection. The output callback never waits for its state mutex: contention produces silence for that callback, so hard real-time or zero-underrun behavior is not promised.
+The device is opened once, at construction. A backend failure is signaled atomically and reported as `SoundRsError(code="device")`; create a new Player to reopen it. The two-second no-progress watchdog separately reports `stalled`. This is fault reporting, not automatic reconnection. The output callback never waits for its state mutex: contention produces silence for that callback, so hard real-time or zero-underrun behavior is not promised. Physical disconnect behavior still needs device testing on each platform.

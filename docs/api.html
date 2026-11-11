@@ -26,28 +26,28 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html" aria-current="page">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html" aria-current="page">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">09 · Reference</p>
 <h1>API reference</h1>
-<p class="lead">Playback, recording, decoding and WAV writing. Library failures raise
-<code>sound_rs.SoundRsError</code>, a subclass of <code>RuntimeError</code>, with a stable
-<code>.code</code>. Invalid Python argument types can raise <code>TypeError</code>.</p>
+<p class="lead">Functions for files and arrays, plus persistent <code>Player</code> and
+<code>Recorder</code> classes. Library failures use <code>sound_rs.SoundRsError</code>;
+Python argument conversion can raise <code>TypeError</code> or <code>OverflowError</code>.</p>
 
 <h2 id="module">Module</h2>
 <p><code class="num">sound_rs.__version__</code> — the installed version as a string, for example
 <code class="num">"0.2.1"</code>.</p>
-<p><code>class sound_rs.SoundRsError(RuntimeError)</code> carries a stable
-<code>code: str</code> describing the failure; see <a href="guarantees.html#errors">error codes</a>.</p>
+<p><code>class sound_rs.SoundRsError(RuntimeError)</code> — library failures carry a stable
+<code>.code</code>; see <a href="guarantees.html#errors">error codes</a>.</p>
 
 <h2 id="play-audio">play_audio</h2>
 <pre data-lang=""><code>sound_rs.play_audio(file_path: str, device: str | None = None) -&gt; None</code></pre>
-<p>Plays a file and blocks until it ends. Releases the GIL, so other threads keep running.
-Opens the output device for this call, which costs about 0.1–0.2 s before the first sound —
-use <a href="#player">Player</a> for repeated playback.</p>
+<p>Plays a file and blocks until it ends, releasing the GIL while waiting for playback.
+Opens the output device for this call; startup cost depends on the backend and device.
+Use <a href="#player">Player</a> for repeated playback.</p>
 <ul>
-  <li><code>file_path</code> — any container the probe accepts.</li>
+  <li><code>file_path</code> — a file with a supported container and codec.</li>
   <li><code>device</code> — exact device name from <code>list_devices()</code>; the default
       device when omitted.</li>
 </ul>
@@ -59,25 +59,26 @@ sound_rs.play_audio(&quot;music.flac&quot;)
 sound_rs.play_audio(&quot;music.flac&quot;, device=&quot;MacBook Pro Speakers&quot;)</code></pre>
 <h2 id="is-supported-format">is_supported_format</h2>
 <pre data-lang=""><code>sound_rs.is_supported_format(file_path: str) -&gt; bool</code></pre>
-<p>Probes the container header. Does not decode, does not check that the audio data is intact,
-and does not raise for a missing file — it returns <code>False</code>. About 1 ms on any file
-size.</p>
+<p>Probes the container header. Does not decode or verify codec support and packet integrity.
+A missing or unrecognized file returns <code>False</code>. Probe time depends on the container
+and storage.</p>
 
 <h2 id="get-audio-info">get_audio_info</h2>
 <pre data-lang=""><code>sound_rs.get_audio_info(file_path: str) -&gt; tuple[int, int, float]</code></pre>
-<p>Returns <code>(sample_rate, channels, duration_seconds)</code>. Reads the header, so the cost
-does not depend on file length. For AAC the container has no channel layout, so one packet is
-decoded to learn it (~0.15 ms).</p>
-<p>Duration is <code>None</code> in the Python sense only when the header has no frame count;
-in that case the file is decoded to measure it.</p>
+<p>Returns <code>(sample_rate, channels, duration_seconds)</code>. Uses the header when complete;
+missing rate or channel information can require decoding a packet.</p>
+<p>If the header has no frame count, the file is decoded to measure duration. The returned
+duration is a number; this function does not return <code>None</code>.</p>
 
 <h2 id="load">load</h2>
-<pre data-lang=""><code>sound_rs.load(file_path: str, sample_rate: int | None = None, mono: bool = False,
-              offset: float = 0.0, duration: float | None = None)
-    -&gt; tuple[numpy.ndarray, int]</code></pre>
-<p>Decodes the whole file to float32 with shape <code>(frames, channels)</code>, and returns it
-with the sample rate. Requires NumPy. Peak memory is the decoded audio: 10 minutes of stereo
-is 211 MB.</p>
+<pre data-lang=""><code>sound_rs.load(file_path: str, sample_rate: int | None = None,
+              mono: bool = False, offset: float = 0.0,
+              duration: float | None = None) -&gt; tuple[numpy.ndarray, int]</code></pre>
+<p>Decodes to float32 with shape <code>(frames, channels)</code>, returning the array and rate.
+Optional <code>sample_rate</code> resamples, <code>mono</code> folds channels, and
+<code>offset</code>/<code>duration</code> select a window in seconds. Times must be finite and
+non-negative; a requested rate must be positive. Requires NumPy. Memory includes the returned
+audio plus decoder and conversion/resampling temporaries.</p>
 <p>Raises <code>SoundRsError</code> for an unreadable file or when the build has no NumPy
 support.</p>
 <p><code>offset</code> and <code>duration</code> are finite, non-negative seconds.
@@ -92,15 +93,17 @@ positive; invalid options raise <code>SoundRsError(code="usage")</code> before f
 <p>Decodes in parallel with a Rayon pool, releasing the GIL. Order matches <code>paths</code>.
 <code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. All files
 are processed, then the first failure in input order is raised. A requested sample rate must
-be positive, including for an empty batch.</p>
+be positive, including for an empty batch. Optional rate and mono conversion apply to every file; the
+whole batch is retained in memory.</p>
 <pre data-lang=""><code>clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;], threads=2)</code></pre>
 <h2 id="play-array">play_array</h2>
 <pre data-lang=""><code>sound_rs.play_array(array: numpy.ndarray, sample_rate: int) -&gt; None</code></pre>
 <p>Plays a float32 array: <code>(frames,)</code> for mono or <code>(channels, frames)</code>
 for multichannel. Converts to the device layout and resamples if the rate differs, then blocks
 until playback ends.</p>
-<p>Raises <code>TypeError</code> for anything that is not a 1D or 2D float32 ndarray, and
-<code>SoundRsError</code> for a device failure.</p>
+<p>Raises <code>TypeError</code> for an unsupported dtype/dimensionality,
+<code>SoundRsError(code="usage")</code> for invalid rates, channel counts or non-finite
+samples, and <code>SoundRsError(code="device")</code> for device failures.</p>
 
 <h2 id="play-sine-wave">play_sine_wave</h2>
 <pre data-lang=""><code>sound_rs.play_sine_wave(frequency: float, duration: float, sample_rate: int) -&gt; None</code></pre>
@@ -119,7 +122,9 @@ returns an exit code. You do not call it from Python — see
 <p>Writes float32 audio to a WAV file. The array is <code>(frames,)</code> for mono or
 <code>(frames, channels)</code> — the same layout <code>load</code> returns, so
 <code>sound_rs.write(path, *sound_rs.load(src))</code> round-trips. Samples outside −1…1 are
-clipped. Subtypes: <code>pcm16</code>, <code>pcm24</code>, <code>float32</code>.</p>
+clipped. Subtypes: <code>pcm16</code>, <code>pcm24</code>, <code>float32</code>. Samples must
+be finite and the rate positive. See <a href="writing.html">Writing WAV files</a> for memory
+and RIFF limits.</p>
 <p>Only <code>.wav</code> is accepted so far; any other extension raises
 <code>SoundRsError</code> with <code>code="usage"</code>. Returns nothing.</p>
 <p>The sample rate and channel count must be positive and fit the WAV header. NaN and
@@ -131,10 +136,10 @@ Read-only and strided float32 arrays are accepted; float64 remains a <code>TypeE
 sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;pcm24&quot;)</code></pre>
 <h2 id="load-bytes">load_bytes</h2>
 <pre data-lang=""><code>sound_rs.load_bytes(data: bytes) -&gt; tuple[numpy.ndarray, int]</code></pre>
-<p>Decodes audio that is already in memory with the same array layout as <code>load</code>;
-the MP4 edit list is read from the buffer as well. MP3 bytes use Symphonia, while full-file
-MP3 loads use minimp3, so their samples and alignment can differ. Corrupt data raises
-<code>SoundRsError</code> with <code>code="format"</code>.</p>
+<p>Decodes bytes to a float32 <code>(frames, channels)</code> array and its sample rate.
+AAC-in-MP4 priming is read from the buffer's edit list. MP3 uses Symphonia here, while a
+full-file <code>load</code> uses minimp3; samples and alignment can differ. Malformed data can
+raise <code>SoundRsError(code="format")</code>; an unexpected EOF may yield a decodable prefix.</p>
 
 <h2 id="list-devices">list_devices</h2>
 <pre data-lang=""><code>sound_rs.list_devices() -&gt; list[tuple[int, str, bool]]</code></pre>
@@ -150,7 +155,7 @@ there is no microphone or the OS denies access.</p>
   <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
   <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
   <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
-  <tr><td class="num">record_to(path, seconds, subtype)</td><td>None</td><td>record and write a WAV in one call</td></tr>
+  <tr><td class="num">record_to(path, seconds, subtype="pcm16")</td><td>None</td><td>Capture in memory, then write a WAV</td></tr>
   <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
 </table>
 
@@ -162,26 +167,31 @@ there is no microphone or the OS denies access.</p>
 <h2 id="player">Player</h2>
 <pre data-lang=""><code>sound_rs.Player(device: str | None = None)</code></pre>
 <p>Opens one output stream and keeps it open. Device name matching is exact; the default device
-is used when omitted. The stream closes when the object is deleted or when the
-<code>with</code> block exits.</p>
+is used when omitted. Create, use and destroy it on the same thread. A <code>with</code> block
+stops playback on exit; the device stream closes when the object is destroyed.</p>
 
 <h3 id="methods">Methods</h3>
 <table>
   <tr><th>Signature</th><th>Returns</th><th>Notes</th></tr>
   <tr><td class="num">play_file(path)</td><td>None</td><td>Streams from disk, returns immediately</td></tr>
   <tr><td class="num">play_array(array, rate)</td><td>None</td><td>1D or 2D float32</td></tr>
+  <tr><td class="num">play_samples(samples, src_channels, sample_rate)</td><td>None</td><td>Interleaved Python sequence, converted to float32; no NumPy required</td></tr>
   <tr><td class="num">pause()</td><td>None</td><td>Position freezes</td></tr>
-  <tr><td class="num">resume()</td><td>None</td><td>Continues, or replays if finished</td></tr>
-  <tr><td class="num">stop()</td><td>None</td><td>Rewinds to zero</td></tr>
-  <tr><td class="num">seek(seconds)</td><td>None</td><td>Frame-accurate, clamped to the track</td></tr>
-  <tr><td class="num">wait()</td><td>None</td><td>Blocks until the source ends; GIL released</td></tr>
-  <tr><td class="num">enqueue(path)</td><td>None</td><td>Plays after the current track; up to 128 entries</td></tr>
+  <tr><td class="num">resume()</td><td>None</td><td>Continues an active source; a finished feed requires begin_feed again</td></tr>
+  <tr><td class="num">stop()</td><td>None</td><td>Clears source/queue and resets position; keeps device open</td></tr>
+  <tr><td class="num">seek(seconds)</td><td>None</td><td>Finite file/array target, clamped to known duration; preserves pause</td></tr>
+  <tr><td class="num">wait()</td><td>None</td><td>Waits for completion/drain or returns while paused/stopped; GIL released</td></tr>
+  <tr><td class="num">enqueue(path)</td><td>None</td><td>Requires active file source; up to 128 waiting entries</td></tr>
   <tr><td class="num">clear_queue()</td><td>None</td><td>Drops everything queued</td></tr>
   <tr><td class="num">begin_feed(rate)</td><td>None</td><td>Switches to samples pushed from Python</td></tr>
-  <tr><td class="num">feed(array)</td><td>None</td><td>Blocks while the ring is full; call from one thread</td></tr>
+  <tr><td class="num">feed(array)</td><td>None</td><td>Requires begin_feed; blocks on full ring, times out after five seconds without progress</td></tr>
   <tr><td class="num">end_feed()</td><td>None</td><td>No more samples; finishes when the ring drains</td></tr>
 </table>
 
+<p><code>play_samples</code> is an existing Python-exposed method. Supply complete interleaved
+frames: <code>[left0, right0, left1, right1]</code> with <code>src_channels=2</code>. It copies
+the input and prepares it for the device, then returns while playback continues. Prefer
+<code>play_array</code> for NumPy arrays.</p>
 <h3 id="properties">Properties</h3>
 <table>
   <tr><th>Name</th><th>Type</th><th>Notes</th></tr>
@@ -193,7 +203,7 @@ is used when omitted. The stream closes when the object is deleted or when the
   <tr><td class="num">duration</td><td>float | None</td><td>Seconds; <code>None</code> until known</td></tr>
   <tr><td class="num">is_playing</td><td>bool</td><td><code>False</code> when paused, stopped or finished</td></tr>
   <tr><td class="num">queue</td><td>list[str]</td><td>Paths waiting behind the current track</td></tr>
-  <tr><td class="num">underruns</td><td>int</td><td>Callbacks that starved after audio started; healthy streams stay at 0</td></tr>
+  <tr><td class="num">underruns</td><td>int</td><td>Ring-starvation callbacks after audio started; excludes silence from lock contention</td></tr>
   <tr><td class="num">latency</td><td>float | None</td><td>Last device latency in milliseconds</td></tr>
 </table>
 
@@ -210,6 +220,7 @@ with sound_rs.Player() as player:
   <tr><th>Raised by</th><th>When</th></tr>
   <tr><td class="num">SoundRsError</td><td>Unreadable file, no output device, device disconnected, stalled stream, no NumPy support</td></tr>
   <tr><td class="num">TypeError</td><td>An array that is not a 1D/2D float32 ndarray</td></tr>
+  <tr><td class="num">OverflowError</td><td>Python integer outside a Rust argument's representable range</td></tr>
 </table>
 <p><code>SoundRsError</code> subclasses <code>RuntimeError</code>, so existing
 <code>except RuntimeError</code> handlers keep working.</p>

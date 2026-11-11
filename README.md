@@ -24,10 +24,11 @@ recording era begins: write WAV, record straight to a file. Guides for coding ag
 
 ## 🚀 Features
 
-- **Formats:** WAV, MP3, FLAC, OGG/Vorbis, M4A, AAC — any bit depth, including 24-bit
-- **Streaming playback:** a two-hour file costs ~4 MB of RAM, not gigabytes, and the
-  first sound arrives in ~11 ms instead of after the whole decode
-- **`Player`:** one output stream stays open — `play`, `pause`, `resume`, `seek`,
+- **Formats:** WAV (including tested 24-bit PCM), MP3, FLAC, OGG/Vorbis and AAC in M4A/MP4;
+  support depends on the codec and container, not just the file extension
+- **Streaming playback:** incremental decoding into a bounded one-second playback ring;
+  the full file is not retained in memory, while decoder/filter/process overhead is additional
+- **`Player`:** one output stream stays open — `play_file`, `play_array`, `pause`, `resume`, `seek`,
   `stop`, `volume`, `position`, `duration`
 - **Decode to NumPy:** `load(path, sample_rate=, mono=, offset=, duration=)` — resample to
   16 kHz mono in one call, or decode only a window
@@ -40,20 +41,20 @@ recording era begins: write WAV, record straight to a file. Guides for coding ag
 - **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push
   samples from Python with backpressure. Queueing requires a file source; feed timeouts
   measure lack of progress, and `wait()` includes the final audio drain
-- **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded
-  audio lines up with the original
-- **Fast metadata:** `get_audio_info` reads the container header, ~1 ms regardless of
-  file length
+- **Gapless metadata:** encoder delay/padding are trimmed where available. MP3 decoder paths
+  retain a known alignment difference; AAC can retain less than one codec frame of tail padding
+- **Metadata:** `get_audio_info` uses the container header when complete; missing information
+  can require packet or full-file decoding
 - **Resampling:** rubato's FFT resampler with a proper anti-aliasing filter
   and streaming EOF drain that preserves the converted frame count and filter tail
 - **Device-native output:** the stream opens in whatever sample format the device
   wants (f32, f64, i16, i32, u8, u16)
-- **Errors:** everything raises `sound_rs.SoundRsError` with a stable `.code`
+- **Errors:** library failures raise `sound_rs.SoundRsError` with a stable `.code`
   (`io`, `format`, `device`, `stalled`, `unsupported`, `usage`)
-- **Tested guarantees:** no panics on corrupt input (mutation fuzzing), deterministic decode
-  (PCM hashes in CI), underrun reporting. The full list is on the docs site.
-- **No ffmpeg, no system libraries:** MP3, FLAC, OGG, AAC and WAV are decoded inside
-  the wheel; `pip install sound_rs` needs nothing else
+- **Tested behavior:** malformed-input mutation tests, quantized fixture hashes and MP3
+  length/level checks, ring-starvation reporting. The full list is on the docs site.
+- **No external decoder:** MP3, FLAC, OGG, AAC and WAV decoders are inside the wheel.
+  Linux wheels still need the ALSA runtime; NumPy is required for array APIs
 - **Typed:** ships `sound_rs.pyi` and `py.typed`, so editors autocomplete everything
 
 ---
@@ -68,6 +69,9 @@ Wheels are built with the stable ABI (`abi3-py310`): one per platform — Linux
 x86_64 and aarch64, Windows amd64, macOS arm64 and Intel — each covering Python
 3.10 and newer. Other platforms build from source.
 
+For loading, writing, array playback and recording arrays, use `pip install 'sound_rs[numpy]'`.
+Python argument conversion may raise `TypeError` or `OverflowError`; float64 arrays are rejected.
+
 ---
 
 ## ⌨️ Command line
@@ -78,7 +82,7 @@ without opening Python:
 ```bash
 soundrs --help       # commands and the documentation link
 soundrs devices      # output devices, default marked with *
-soundrs info a.flac  # rate, channels, duration from the header
+soundrs info a.flac  # rate, channels, duration; decodes if the header is incomplete
 soundrs play a.flac --volume 0.5
 soundrs docs         # prints https://neksand.github.io/sound_rs/
 ```
@@ -112,6 +116,10 @@ with sound_rs.Player() as player:
 
 sound_rs.list_devices()              # [(0, "MacBook Pro Speakers", True), ...]
 ```
+
+Create, use and destroy each `Player` or `Recorder` on the same thread. Separate threads
+can own separate instances. Playback waits release the GIL; preparation and teardown can
+still run while holding it.
 
 ### Record
 
@@ -158,7 +166,7 @@ player.wait()
 ### Inspect and decode
 
 ```python
-sample_rate, channels, duration = sound_rs.get_audio_info("music.mp3")  # no decode
+sample_rate, channels, duration = sound_rs.get_audio_info("music.mp3")  # header when sufficient
 audio, rate = sound_rs.load("music.flac")                               # (frames, channels) float32
 audio, rate = sound_rs.load("music.flac", sample_rate=16000, mono=True) # dataset shape
 
@@ -191,12 +199,17 @@ python bench/run.py --compare       # + soundfile / sounddevice
 python bench/run.py --reps 9
 ```
 
-**Hardware I measured on:** Apple M5 Pro, macOS 26.6.2, Python 3.14.7, release
+**Historical 0.3.0 measurements:** Apple M5 Pro, macOS 26.6.2, Python 3.14.7, release
 build (`lto = "fat"`, `opt-level = 3`). Competitors: libsndfile 1.2
 (`soundfile` 0.14), PortAudio (`sounddevice`). Corpus: 3 s and 10 min stereo
 44.1 kHz, generated by the harness.
 
-**Scoreboard** — every axis in this section, side by side:
+The tables below are historical measurements, not performance guarantees for a current device.
+The [0.3.0 report](docs/reports/0.3.0-report.md) records the original run; the
+[current engineering report](docs/reports/FINAL_ENGINEERING_REPORT.md) separates newly executed
+headless measurements from device tests that were not rerun.
+
+**Historical scoreboard:**
 
 | axis | sound_rs | best competitor | ratio |
 |---|---|---|---|
@@ -211,41 +224,7 @@ build (`lto = "fat"`, `opt-level = 3`). Competitors: libsndfile 1.2
 | playback overhead | 30 ms | 241 ms | 8× |
 | batch decode (2 files) | 177 ms | 299 ms | 1.7× |
 
-**Import time** (cold process):
-
-| | time | peak RSS |
-|---|---|---|
-| sound_rs | **1.1 ms** | 25 MB |
-| soundfile | 31.8 ms | 34 MB |
-| sounddevice | 75.3 ms | 32 MB |
-
-**Metadata** (60 s file): sound_rs **1.2 ms**, soundfile 31.7 ms.
-
-**Decode** 60 s stereo, median / p95:
-
-| format | sound_rs | libsndfile | result | PCM check |
-|---|---|---|---|---|
-| WAV | **131 / 160 ms** | 155 ms | 1.2× faster | identical |
-| FLAC | **265 / 267 ms** | 465 ms | 1.8× faster | identical |
-| MP3 | **241 / 249 ms** | 268 ms | 1.1× faster | 1.6e-05, 47-sample offset |
-| M4A (AAC) | 361 / 365 ms | unsupported | sound_rs only | matches ffmpeg to 8e-08 |
-
-**Streaming a 10-minute FLAC** — time to the first sound and peak memory:
-
-| | first sound | peak RSS |
-|---|---|---|
-| sound_rs `Player` | **11.3 ms** | **43 MB** |
-| soundfile + sounddevice | 302 ms | 256 MB |
-
-**Playback of a 3 s tone** — overhead over the track duration:
-
-| | overhead |
-|---|---|
-| sound_rs `Player` (stream kept open) | **+30 ms** |
-| `sounddevice.play` (opens a stream per call) | +241 ms |
-| `sound_rs.play_array` (one-shot, opens a stream) | +182 ms |
-
-**Batch decode** two FLAC files: `load_many` **272 ms** vs a `soundfile` loop 448 ms.
+Detailed original timings and validation are retained in the linked historical report.
 
 What the numbers do not hide:
 
@@ -266,14 +245,21 @@ What the numbers do not hide:
 | ✅ 1 | Playback + formats | WAV, MP3, FLAC, OGG, M4A, 24-bit |
 | ✅ 2 | NumPy integration | 1D/2D arrays, `load`, `load_many` |
 | ✅ 3 | `Player` | Persistent stream: pause, seek, volume, position |
-| ✅ 4 | Streaming decode | Constant memory, ~11 ms to first sound |
+| ✅ 4 | Streaming decode | Bounded playback ring, incremental file decoding |
 | ✅ 5 | Device selection | `list_devices`, `list_input_devices`, `device=` |
 | ✅ 6 | Recording | `Recorder`: microphone to float32 array |
 | ✅ 7 | Queues and live input | `enqueue`, `begin_feed`/`feed` |
 | ✅ 8 | Datasets | `load(..., sample_rate=16000, mono=True)`, parallel `load_many` |
 | ✅ 9 | Writing files | `write`, `Recorder.record_to`, PCM16/PCM24/float32 WAV |
-| 🔜 10 | Hot-swap on disconnect | Reopen automatically instead of raising `stalled` |
-| 🔜 11 | Editing | Slice, join, gain, fade, normalize |
+| Under investigation | Hot-swap on disconnect | Requires device-backed recovery and cancellation tests on each OS |
+| Planned | Editing and level analysis | Frame-first slice/join/gain/fade/normalize/RMS/peak with numerical semantics |
+| Planned | Continuous fed resampling | Retain filter state across blocks; validate long-run frame counts |
+| Planned | Incremental disk recording | Bounded memory and correct WAV finalization on errors/cancel |
+| Under investigation | FFT/STFT, filters and synthesis | Independent numerical references and documented axes/latency |
+
+The [implementation plan](docs/IMPLEMENTATION_PLAN.md) gives acceptance criteria. The
+[engineering audit](docs/reports/ENGINEERING_AUDIT.md) and [PR roadmap](docs/PR_ROADMAP.md)
+distinguish current capabilities, proposed fixes and deferred work.
 
 ---
 
@@ -288,9 +274,11 @@ python tests/test_validation.py # invalid inputs, WAV boundaries, NumPy layouts,
 SOUND_RS_PLAY=1 python tests/smoke.py   # also plays (needs an audio device)
 python tests/decode_regression.py  # PCM hashes; must not change
 python docs/check_api.py        # every public name is documented
+python docs/check_site.py       # links, anchors, search, sitemap, Markdown and llms
+python -m unittest discover -s tests -p 'test_*.py'
 python3 docs/_build.py          # docs site, llms.txt and .md pages
 python bench/run.py --compare --report bench/REPORT.md
-python3 docs/_build.py          # rebuild the documentation site
+python bench/run.py --compare --no-audio  # reproducible device-free subset
 ```
 
 ---

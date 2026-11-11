@@ -138,7 +138,8 @@ def main():
         # Bytes decode must keep the gapless trim, AAC included.
         m4a = os.path.join(FIX, "tone.m4a")
         file_audio, _ = sound_rs.load(m4a)
-        bytes_audio, _ = sound_rs.load_bytes(open(m4a, "rb").read())
+        with open(m4a, "rb") as handle:
+            bytes_audio, _ = sound_rs.load_bytes(handle.read())
         assert file_audio.shape == bytes_audio.shape, (
             file_audio.shape,
             bytes_audio.shape,
@@ -183,7 +184,7 @@ def main():
         devices = sound_rs.list_devices()
         assert isinstance(devices, list), devices
         assert isinstance(sound_rs.list_input_devices(), list)
-        if sound_rs.list_input_devices():
+        if os.environ.get("SOUND_RS_PLAY") == "1" and sound_rs.list_input_devices():
             recorder = sound_rs.Recorder()
             assert recorder.sample_rate > 0 and recorder.channels > 0
             del recorder
@@ -196,22 +197,22 @@ def main():
     )
     if os.path.exists(script):
         help_text = subprocess.run(
-            [script, "--help"], capture_output=True, text=True, check=True
+            [script, "--help"], capture_output=True, text=True, check=True, timeout=30
         ).stdout
         assert "https://neksand.github.io/sound_rs/" in help_text, help_text
         assert "play" in help_text and "info" in help_text, help_text
 
         version = subprocess.run(
-            [script, "--version"], capture_output=True, text=True, check=True
+            [script, "--version"], capture_output=True, text=True, check=True, timeout=30
         ).stdout.strip()
         assert version.startswith("soundrs "), version
 
         info = subprocess.run(
-            [script, "info", mono], capture_output=True, text=True, check=True
+            [script, "info", mono], capture_output=True, text=True, check=True, timeout=30
         ).stdout
         assert "44100 Hz" in info and "0:00.1" in info, info
 
-        bad = subprocess.run([script, "nope"], capture_output=True, text=True)
+        bad = subprocess.run([script, "nope"], capture_output=True, text=True, timeout=30)
         assert bad.returncode == 2, bad.returncode
 
     if os.environ.get("SOUND_RS_PLAY") == "1":

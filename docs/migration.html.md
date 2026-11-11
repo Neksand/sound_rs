@@ -67,7 +67,7 @@ import sound_rs
 sound_rs.play_audio("track.mp3")
 ```
 
-Same one-line call, but the format support is the same on every platform and the call releases the GIL.
+The wheel includes the same decoder families on each supported platform. The playback wait releases the GIL; device setup and teardown still depend on the backend.
 
 ## What you gain, what you give up
 

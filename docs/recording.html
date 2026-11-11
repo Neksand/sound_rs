@@ -26,7 +26,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html" aria-current="page">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html" aria-current="page">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">09 · Guides</p>
@@ -47,10 +47,10 @@ name to the constructor:</p>
 <pre data-lang=""><code>recorder = sound_rs.Recorder(device=&quot;MacBook Pro Microphone&quot;)
 print(recorder.device, recorder.sample_rate, recorder.channels)</code></pre>
 <p>The rate and channel count are whatever the device reports; the library does not resample
-on input. If you need 16 kHz mono, ask for it after the fact:</p>
+on input. Folding to mono does not change the rate:</p>
 <pre data-lang=""><code>import sound_rs
 
-mono = audio.mean(axis=1, keepdims=True)     # or use numpy&#x27;s resampler of choice</code></pre>
+mono = audio.mean(axis=1, keepdims=True)     # still at the captured sample rate</code></pre>
 <h2 id="start-stop">start and stop</h2>
 <p><code>record(seconds)</code> is the convenient form. For an open-ended take, use
 <code>start()</code> and <code>stop()</code>:</p>
@@ -59,25 +59,19 @@ recorder.start()
 input(&quot;press enter to stop&quot;)
 audio, rate = recorder.stop()</code></pre>
 <h2 id="wav">Writing a WAV</h2>
-<p>The arrays are plain float32, so the standard library writes them:</p>
-<pre data-lang=""><code>import wave
-import numpy as np
-import sound_rs
+<p>Use the same frames-first float32 layout as <code>load</code>:</p>
+<pre data-lang=""><code>import sound_rs
 
-audio, rate = sound_rs.Recorder().record(3.0)
-pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(&quot;&lt;i2&quot;)
-
-with wave.open(&quot;take.wav&quot;, &quot;w&quot;) as handle:
-    handle.setnchannels(audio.shape[1])
-    handle.setsampwidth(2)
-    handle.setframerate(rate)
-    handle.writeframes(pcm.tobytes())</code></pre><div class="warn"><b>Microphone permission</b>macOS and Windows ask for microphone access the first time. A denied permission raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no silent fallback.</div>
+with sound_rs.Recorder() as recorder:
+    audio, rate = recorder.record(3.0)
+sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;pcm16&quot;)</code></pre><div class="warn"><b>Microphone permission</b>macOS and Windows ask for microphone access the first time. A denied permission raises <code>SoundRsError</code> with <code>code == 'device'</code>; there is no silent fallback.</div>
 <h2 id="save">Saving a take</h2>
 <pre data-lang=""><code>import sound_rs
 
 with sound_rs.Recorder() as recorder:
     recorder.record_to(&quot;take.wav&quot;, 5.0, subtype=&quot;pcm24&quot;)</code></pre>
-<p>For anything else — resampling, trimming, writing a different name — record to an array
+<p><code>record_to</code> captures the take in memory, then writes it; it is not incremental
+disk recording. For preprocessing or another destination, record to an array
 and use <code>sound_rs.write</code>, which writes the same
 <code>(frames, channels)</code> layout that <code>load</code> returns.</p>
 <pre data-lang=""><code>import sound_rs
@@ -86,13 +80,13 @@ audio, rate = sound_rs.Recorder().record(5.0)
 sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;float32&quot;)</code></pre>
 <h2 id="limits">Limits</h2>
 <ul>
-  <li>The capture starts when the device delivers its first buffer. On Bluetooth headsets that
-      is 100–150 ms, so a short take can be that much shorter than requested — the recorder
-      never adds frames to hide it.</li>
+  <li>Create, use and destroy the recorder on its original thread.</li>
+  <li>Capture starts when the device delivers its first buffer. Startup latency can make a
+      timed take shorter than requested; the recorder does not add frames to hide it.</li>
   <li>The callback writes to a bounded input ring (normally one second, at most 4 MiB).
       A collector thread stores the take outside the audio callback. The recording limit
       remains 230 M float32 samples (920 MB of payload, roughly 40 minutes at 48 kHz stereo).
-      This is not a cap on total process memory.</li>
+      This is not a cap on total process memory or a hard real-time guarantee.</li>
   <li>Input overflow invalidates the take with <code>code="stalled"</code>, the storage limit
       or allocation failure uses <code>unsupported</code>, and a backend failure uses
       <code>device</code>. The library does not return a successful partial take after these
@@ -101,11 +95,11 @@ sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;float32&quot;)</
   <li><code>record_to()</code> records to memory before writing the WAV; it is not an
       incremental disk recorder.</li>
   <li>No resampling, mixing or effects on input — capture is raw device audio.</li>
-  <li>Duplex (playing while recording) works because they are separate streams, but they are
-      independent objects with independent device handles.</li>
+  <li>Playback and recording use independent streams. Simultaneous access depends on backend
+      and device support; there is no shared clock or synchronization guarantee.</li>
 </ul>
 
-<div class="next"><a href="datasets.html">← Datasets and ML</a><a href="migration.html">Coming from another library →</a></div>
+<div class="next"><a href="datasets.html">← Datasets and ML</a><a href="writing.html">Writing WAV files →</a></div>
   </main>
   <aside class="toc"><h2>On this page</h2><a href="#devices">Devices</a><a href="#start-stop">start and stop</a><a href="#wav">Writing a WAV</a><a href="#save">Saving a take</a><a href="#limits">Limits</a></aside>
 </div>

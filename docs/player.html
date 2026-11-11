@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>The player — sound_rs docs</title>
-<meta name="description" content="The sound_rs Player: one stream kept open, play, pause, resume, stop, frame-accurate seek, volume, position and duration.">
+<meta name="description" content="The sound_rs Player: one stream kept open, playback, pause, resume, stop, seeking, thread ownership and source lifecycle.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/player.html">
 <link rel="alternate" type="text/markdown" href="player.html.md">
 <link rel="describedby" href="llms.txt">
 <meta property="og:title" content="The player — sound_rs docs">
-<meta property="og:description" content="The sound_rs Player: one stream kept open, play, pause, resume, stop, frame-accurate seek, volume, position and duration.">
+<meta property="og:description" content="The sound_rs Player: one stream kept open, playback, pause, resume, stop, seeking, thread ownership and source lifecycle.">
 <meta property="og:type" content="article">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/app.js" defer></script>
@@ -26,7 +26,7 @@
   </nav>
 </header>
 <div class="shell">
-  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
+  <nav class="side" aria-label="Documentation"><details open><summary>Contents</summary><div class="side-body"><h2>Start</h2><a href="index.html">Overview</a><a href="install.html">Installation</a><a href="quickstart.html">Quickstart</a><a href="cli.html">Command line</a><h2>Guides</h2><a href="player.html" aria-current="page">The player</a><a href="streaming.html">Streaming and memory</a><a href="formats.html">Formats and gapless</a><a href="numpy.html">NumPy and arrays</a><a href="datasets.html">Datasets and ML</a><a href="recording.html">Recording</a><a href="writing.html">Writing WAV files</a><a href="migration.html">Coming from another library</a><h2>Reference</h2><a href="api.html">API reference</a><a href="benchmarks.html">Benchmarks</a><a href="guarantees.html">Guarantees</a><a href="faq.html">Troubleshooting</a><a href="changelog.html">Changelog</a></div></details></nav>
   <main id="main">
 
 <p class="kicker">04 · Guides</p>
@@ -40,16 +40,16 @@ player = sound_rs.Player()                 # opens the default device
 player.play_file(&quot;first.flac&quot;)             # returns immediately
 player.wait()
 
-player.play_file(&quot;second.mp3&quot;)             # no device setup, starts at once
+player.play_file(&quot;second.mp3&quot;)             # reuses the open device
 player.stop()
-del player                                 # closes the stream</code></pre><div class="note"><b>Use it as a context manager</b><code>with sound_rs.Player() as player:</code> closes the stream on exit, including when an exception is raised. Without it, the stream closes when the object is garbage collected, which you cannot predict.</div>
+del player                                 # closes the stream</code></pre><div class="note"><b>Use it as a context manager</b><code>with sound_rs.Player() as player:</code> stops playback and joins the decoder on exit, including when an exception is raised. The output stream remains open until the player object is destroyed; a bound variable can keep it alive after the block.</div>
 <h2 id="lifecycle">Lifecycle</h2>
 <table>
   <tr><th>State</th><th>What it means</th><th>Leaves it</th></tr>
   <tr><td class="num">idle</td><td>Stream open, nothing loaded</td><td><code>play_file</code>, <code>play_array</code></td></tr>
   <tr><td class="num">playing</td><td>Callback writes audio</td><td><code>pause</code>, <code>stop</code>, end of source</td></tr>
   <tr><td class="num">paused</td><td>Callback writes silence, position frozen</td><td><code>resume</code>, <code>stop</code></td></tr>
-  <tr><td class="num">finished</td><td>Source exhausted, stream still open</td><td><code>play_*</code>, <code>resume</code> (replays)</td></tr>
+  <tr><td class="num">finished</td><td>Source exhausted, stream still open</td><td>Start another source; a retained file/array can resume, a finished feed must restart</td></tr>
 </table>
 
 <h2 id="controls">Controls</h2>
@@ -58,17 +58,17 @@ del player                                 # closes the stream</code></pre><div 
   <tr><td class="num">play_file(path)</td><td>Streams a file from disk. Returns immediately.</td></tr>
   <tr><td class="num">play_array(arr, rate)</td><td>Plays an in-memory array; resampled to the device once, up front.</td></tr>
   <tr><td class="num">pause()</td><td>Stops producing sound and freezes <code>position</code>.</td></tr>
-  <tr><td class="num">resume()</td><td>Continues from the paused position, or replays from the start if finished.</td></tr>
-  <tr><td class="num">stop()</td><td>Clears the source and queue, rewinds to zero, keeps the stream open. Start a new source before resume/seek.</td></tr>
+  <tr><td class="num">resume()</td><td>Continues an active source or replays a retained finished file/array. A stopped source or finished feed must restart.</td></tr>
+  <tr><td class="num">stop()</td><td>Clears the source and queue, resets position, keeps the device stream open.</td></tr>
   <tr><td class="num">seek(seconds)</td><td>Jumps; works while paused.</td></tr>
-  <tr><td class="num">wait()</td><td>Waits through the final audio drain (GIL released); returns while paused with the queue intact.</td></tr>
-  <tr><td class="num">del player</td><td>Stops the decoder and closes the stream (or use <code>with</code>).</td></tr>
+  <tr><td class="num">wait()</td><td>Waits for completion/drain, or returns when paused/stopped (GIL released).</td></tr>
+  <tr><td class="num">del player</td><td>Releases this reference; destroying the object stops the decoder and closes the stream.</td></tr>
 </table>
 
 <h2 id="seek">Seeking</h2>
-<p>Seeking a streamed file is accurate to the frame. Containers can only seek to a packet
-boundary, so the player reads the packet's real timestamp and drops the difference. A seek to
-<code>0.5</code> in a 16 kHz file lands on frame 8000, not on the nearest packet start.</p>
+<p>Seeking uses packet timestamps and drops decoded frames before the requested position.
+The source must be a file or an array, and the time finite; paused seeks preserve pause intent.
+Codec/container support determines positioning accuracy and seek cost.</p>
 <p>Seeking preserves pause and queued files. Non-finite positions raise
 <code>SoundRsError(code="usage")</code>; a fed stream or stopped player cannot seek.
 After natural file completion, seek or resume restarts the current file, including the last
@@ -91,10 +91,9 @@ print(player.duration)     # 213.4
 print(player.position)     # 0.0
 print(player.is_playing)   # True</code></pre>
 <h2 id="queue">Queue</h2>
-<p><code>enqueue</code> lines up the next file; when the current one ends the decoder opens it
-and continues on the same stream. Rate and channel count may differ between tracks.</p>
-<p>A queue requires a file source started with <code>play_file()</code>. Enqueuing on an idle,
-array or fed player raises <code>usage</code> instead of creating a queue that cannot advance.</p>
+<p><code>enqueue</code> requires an active file source started with <code>play_file</code>;
+array/feed modes reject it. When the current file ends, the decoder opens the next and continues
+on the same stream. Rate and channel count may differ between tracks. Pausing preserves the queue.</p>
 <pre data-lang=""><code>with sound_rs.Player() as player:
     player.play_file(&quot;first.flac&quot;)
     player.enqueue(&quot;second.mp3&quot;)
@@ -121,13 +120,14 @@ for _ in range(100):
 player.end_feed()
 player.wait()</code></pre><div class="note"><b>Feed at the device rate for clean joins</b>Chunks are converted and resampled independently, so a non-device rate can click at chunk boundaries. Query <code>player.sample_rate</code> and feed that.</div>
 <h2 id="threading">Threading and the GIL</h2>
-<p>Playback and decoding run on Rust threads; decoding, feeding and <code>wait()</code>
-release the GIL. Control methods can briefly join a decoder or query metadata while holding it.
-<code>player.wait()</code> in the main thread does not block an <code>asyncio</code> loop
-running in another thread, and <code>threading.Thread(target=sound_rs.play_audio, ...)</code>
-works as expected.</p>
-<p>One player is one stream. Do not call methods on the same player from several threads at
-once; create one player per thread instead.</p>
+<p>File decoding runs on a Rust worker. Playback waits and feed backpressure release the GIL,
+so other Python threads can run. Array conversion/resampling, metadata queries, player shutdown joins and device
+setup/teardown can still hold it. Calling <code>wait()</code> on an event-loop thread still
+blocks that loop until playback completes.</p>
+<p>Create, use and destroy each <code>Player</code> or <code>Recorder</code> on the same
+thread. Even sequential use from a different thread is invalid. Separate threads may own
+separate instances; a worker may call <code>sound_rs.play_audio</code> because that function
+creates and disposes its own player there.</p>
 
 <h2 id="devices">Device selection</h2>
 <pre data-lang=""><code>import sound_rs
@@ -137,9 +137,10 @@ player = sound_rs.Player(device=&quot;MacBook Pro Speakers&quot;)
 print(player.device, player.sample_rate, player.channels)</code></pre>
 <p>The device is opened once, at construction. A backend failure is signaled atomically and
 reported as <code>SoundRsError(code="device")</code>; create a new Player to reopen it.
-The no-progress watchdog separately reports <code>stalled</code>. This is fault reporting,
+The two-second no-progress watchdog separately reports <code>stalled</code>. This is fault reporting,
 not automatic reconnection. The output callback never waits for its state mutex: contention
-produces silence for that callback, so hard real-time or zero-underrun behavior is not promised.</p>
+produces silence for that callback, so hard real-time or zero-underrun behavior is not promised.
+Physical disconnect behavior still needs device testing on each platform.</p>
 
 <div class="next"><a href="cli.html">← Command line</a><a href="streaming.html">Streaming and memory →</a></div>
   </main>
