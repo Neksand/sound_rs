@@ -45,6 +45,7 @@ recording era begins: write WAV, record straight to a file. Guides for coding ag
 - **Fast metadata:** `get_audio_info` reads the container header, ~1 ms regardless of
   file length
 - **Resampling:** rubato's FFT resampler with a proper anti-aliasing filter
+  and streaming EOF drain that preserves the converted frame count and filter tail
 - **Device-native output:** the stream opens in whatever sample format the device
   wants (f32, f64, i16, i32, u8, u16)
 - **Errors:** everything raises `sound_rs.SoundRsError` with a stable `.code`

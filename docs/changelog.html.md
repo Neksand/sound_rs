@@ -28,6 +28,12 @@
 
 - Make the documented `record_to(..., subtype="pcm16")` default effective at runtime and include context manager methods in the type stub.
 
+## Unreleased — streaming resampler
+
+- Drain filter delay at EOF even when input ends on a full block, remove startup delay for very short tracks, and trim output padding to the exact converted frame count.
+
+- Test numerical output against a full filter pass across packet sizes, sample rates, stereo channels and impulses at the end of a track. Full-decode fixtures are unchanged.
+
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 
 ## 0.4.0

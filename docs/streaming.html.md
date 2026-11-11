@@ -4,6 +4,8 @@
 
 ## How it works
 
+When the sample rate changes, the resampler removes its filter delay and drains the filter tail at EOF. The output contains exactly `ceil(input_frames * output_rate / input_rate)` frames, including tracks shorter than a processing block. Seeking resets the filter and frame counters. This does not make independently resampled `feed()` blocks continuous; use the device rate for those blocks.
+
 - The decoder thread reads a packet, decodes it to float32, converts the channel count and resamples to the device rate.
 
 - The result goes into a ring buffer sized for one second of device audio.

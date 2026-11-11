@@ -374,6 +374,11 @@ page(
 ring buffer, and the audio callback drains it. Memory stays flat no matter how long the file is.</p>
 
 <h2 id="how">How it works</h2>
+<p>When the sample rate changes, the resampler removes its filter delay and drains the
+filter tail at EOF. The output contains exactly <code>ceil(input_frames * output_rate /
+input_rate)</code> frames, including tracks shorter than a processing block. Seeking resets
+the filter and frame counters. This does not make independently resampled
+<code>feed()</code> blocks continuous; use the device rate for those blocks.</p>
 <ol>
   <li>The decoder thread reads a packet, decodes it to float32, converts the channel count
       and resamples to the device rate.</li>
@@ -1108,6 +1113,13 @@ page(
       release the GIL while joining the collector.</li>
   <li>Make the documented <code>record_to(..., subtype="pcm16")</code> default effective at
       runtime and include context manager methods in the type stub.</li>
+</ul>
+<h2 id="unreleased-resampler">Unreleased — streaming resampler</h2>
+<ul>
+  <li>Drain filter delay at EOF even when input ends on a full block, remove startup delay
+      for very short tracks, and trim output padding to the exact converted frame count.</li>
+  <li>Test numerical output against a full filter pass across packet sizes, sample rates,
+      stereo channels and impulses at the end of a track. Full-decode fixtures are unchanged.</li>
 </ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>

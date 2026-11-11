@@ -634,6 +634,10 @@ pub(crate) fn info_or_decode(path: &str) -> Result<(u32, u16, f32), String> {
 pub(crate) struct Resampler {
     inner: Option<rubato::Fft<f32>>,
     channels: usize,
+    source_rate: u32,
+    target_rate: u32,
+    input_frames: u64,
+    output_frames: u64,
     /// Interleaved input accumulated until the resampler's fixed chunk is full.
     pending: Vec<f32>,
     /// Frames of filter delay still to drop from the output; without this the
@@ -669,6 +673,10 @@ impl Resampler {
         Self {
             inner,
             channels,
+            source_rate: src_rate,
+            target_rate: dst_rate,
+            input_frames: 0,
+            output_frames: 0,
             pending: Vec::new(),
             skip_output,
         }
@@ -681,39 +689,54 @@ impl Resampler {
             self.skip_output = inner.output_delay();
         }
         self.pending.clear();
+        self.input_frames = 0;
+        self.output_frames = 0;
     }
 
-    /// Processes whatever is left in the buffer at end of stream. Without
-    /// this the last few milliseconds of a track are silently dropped.
+    /// Drains the filter at end of stream, even when the input ended on a full
+    /// chunk. Startup delay and zero-padding are not part of the real audio.
+    /// Call `reset` before feeding another stream after this final drain.
     pub fn flush(&mut self) -> Vec<f32> {
         use rubato::Resampler as _;
         let Some(inner) = &mut self.inner else {
             return std::mem::take(&mut self.pending);
         };
         let channels = self.channels;
-        let frames = self.pending.len() / channels.max(1);
-        if frames == 0 {
-            return Vec::new();
-        }
-        let Ok(adapter) = rubato::audioadapter_buffers::direct::InterleavedSlice::new(
-            &self.pending,
-            channels,
-            frames,
-        ) else {
+        // Integer arithmetic avoids adding a spurious frame when a floating
+        // resample ratio lands just above an exact duration (44100 -> 48000).
+        let expected = (self.input_frames as u128 * self.target_rate as u128)
+            .div_ceil(self.source_rate as u128);
+        let mut out = Vec::new();
+        while (self.output_frames as u128) < expected {
+            let frames = self.pending.len() / channels;
+            let Ok(adapter) = rubato::audioadapter_buffers::direct::InterleavedSlice::new(
+                &self.pending,
+                channels,
+                frames,
+            ) else {
+                self.pending.clear();
+                break;
+            };
+            let indexing = rubato::Indexing {
+                input_offset: 0,
+                output_offset: 0,
+                partial_len: Some(frames),
+                active_channels_mask: None,
+            };
+            let data = match inner.process(&adapter, Some(&indexing)) {
+                Ok(resampled) => resampled.take_data(),
+                Err(_) => break,
+            };
+            // Subsequent iterations pump zeros to release the filter tail.
             self.pending.clear();
-            return Vec::new();
-        };
-        let indexing = rubato::Indexing {
-            input_offset: 0,
-            output_offset: 0,
-            partial_len: Some(frames),
-            active_channels_mask: None,
-        };
-        let out = match inner.process(&adapter, Some(&indexing)) {
-            Ok(resampled) => resampled.take_data(),
-            Err(_) => Vec::new(),
-        };
-        self.pending.clear();
+            let drop = self.skip_output.min(data.len() / channels);
+            self.skip_output -= drop;
+            let remaining = expected - self.output_frames as u128;
+            let take =
+                (data.len() / channels - drop).min(remaining.min(usize::MAX as u128) as usize);
+            out.extend_from_slice(&data[drop * channels..(drop + take) * channels]);
+            self.output_frames += take as u64;
+        }
         out
     }
 
@@ -725,6 +748,7 @@ impl Resampler {
             return input.to_vec();
         };
         let channels = self.channels;
+        self.input_frames += (input.len() / channels) as u64;
         self.pending.extend_from_slice(input);
 
         let mut out = Vec::new();
@@ -747,6 +771,7 @@ impl Resampler {
                         data.drain(..drop);
                         self.skip_output -= drop / channels.max(1);
                     }
+                    self.output_frames += (data.len() / channels) as u64;
                     out.extend_from_slice(&data);
                 }
                 Err(_) => break,
@@ -985,6 +1010,96 @@ mod tests {
     fn resample_all_is_identity_at_same_rate() {
         let input = vec![0.1f32, 0.2, 0.3];
         assert_eq!(resample_all(&input, 44_100, 44_100, 1), input);
+    }
+
+    #[test]
+    fn stream_resampler_preserves_duration_at_chunk_boundaries() {
+        for (src, dst) in [
+            (44_100, 48_000),
+            (48_000, 44_100),
+            (48_000, 16_000),
+            (16_000, 48_000),
+            (48_000, 48_000),
+        ] {
+            for frames in [0usize, 1, 100, 1023, 1024, 1025, 2048, 44_100] {
+                for channels in [1usize, 2] {
+                    let mut stream = Resampler::new(src, dst, channels);
+                    let mut out = stream.process(&vec![0.5; frames * channels]);
+                    out.extend(stream.flush());
+                    let expected = (frames as u64 * dst as u64).div_ceil(src as u64) as usize;
+                    assert_eq!(
+                        out.len(),
+                        expected * channels,
+                        "{frames} frames, {channels} channels, {src} -> {dst}"
+                    );
+                    assert!(stream.flush().is_empty(), "draining twice repeats audio");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stream_resampler_matches_offline_filter_and_keeps_the_tail() {
+        use rubato::Resampler as _;
+
+        for (src, dst) in [(44_100, 48_000), (48_000, 44_100), (48_000, 16_000)] {
+            for frames in [1usize, 100, 1024, 2048, 3000] {
+                let channels = 2;
+                let mut input: Vec<f32> = (0..frames * channels)
+                    .map(|i| (i as f32 * 0.037).sin() * 0.25)
+                    .collect();
+                input[0] = 0.75;
+                input[frames * channels - 1] = -0.75;
+                let adapter = rubato::audioadapter_buffers::direct::InterleavedSlice::new(
+                    &input, channels, frames,
+                )
+                .unwrap();
+                let mut offline = rubato::Fft::<f32>::new(
+                    src as usize,
+                    dst as usize,
+                    RESAMPLE_CHUNK,
+                    channels,
+                    rubato::FixedSync::Input,
+                )
+                .unwrap();
+                let reference = offline
+                    .process_all(&adapter, frames, None)
+                    .unwrap()
+                    .take_data();
+                for chunk_frames in [1usize, 17, 300, 1024, 4096] {
+                    let mut stream = Resampler::new(src, dst, channels);
+                    let mut out = Vec::new();
+                    for chunk in input.chunks(chunk_frames * channels) {
+                        out.extend(stream.process(chunk));
+                    }
+                    out.extend(stream.flush());
+                    let expected =
+                        (frames as u64 * dst as u64).div_ceil(src as u64) as usize * channels;
+                    assert_eq!(out.len(), expected);
+                    // process_all rounds its floating-point ratio upward; at
+                    // integer boundaries it can return one extra frame.
+                    assert!(reference.len() >= out.len());
+                    for (actual, expected) in out.iter().zip(&reference) {
+                        assert!((actual - expected).abs() < 1e-6, "{src}->{dst}, {frames} frames, chunks of {chunk_frames}: {actual} != {expected}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stream_resampler_reset_discards_the_old_filter_tail() {
+        let mut stream = Resampler::new(44_100, 48_000, 1);
+        stream.process(&vec![0.75; 2048]);
+        stream.reset();
+        let input = vec![-0.25; 100];
+        let mut actual = stream.process(&input);
+        actual.extend(stream.flush());
+        let mut fresh = Resampler::new(44_100, 48_000, 1);
+        let mut expected = fresh.process(&input);
+        expected.extend(fresh.flush());
+        assert_eq!(actual, expected);
+        assert_eq!(actual.len(), 109);
     }
 
     #[test]
@@ -1397,6 +1512,27 @@ mod property_tests {
                 "{} frames at {} Hz -> {} frames at {} Hz, expected ~{}",
                 frames, src, actual, dst, expected
             );
+        }
+
+        #[test]
+        fn streaming_resample_length_is_independent_of_packet_size(
+            frames in 1usize..5_000,
+            channels in 1usize..=2,
+            packet_frames in 1usize..2_048,
+            src in rate_strategy(),
+            dst in rate_strategy(),
+        ) {
+            let input = vec![0.25f32; frames * channels];
+            let mut resampler = Resampler::new(src, dst, channels);
+            let mut output = Vec::new();
+            for packet in input.chunks(packet_frames * channels) {
+                output.extend(resampler.process(packet));
+            }
+            output.extend(resampler.flush());
+            let expected = (frames as u64 * dst as u64).div_ceil(src as u64) as usize;
+            prop_assert_eq!(output.len(), expected * channels);
+            prop_assert!(output.iter().all(|sample| sample.is_finite()));
+            prop_assert!(resampler.flush().is_empty());
         }
 
         #[test]

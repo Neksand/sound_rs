@@ -60,6 +60,13 @@
   <li>Make the documented <code>record_to(..., subtype="pcm16")</code> default effective at
       runtime and include context manager methods in the type stub.</li>
 </ul>
+<h2 id="unreleased-resampler">Unreleased — streaming resampler</h2>
+<ul>
+  <li>Drain filter delay at EOF even when input ends on a full block, remove startup delay
+      for very short tracks, and trim output padding to the exact converted frame count.</li>
+  <li>Test numerical output against a full filter pass across packet sizes, sample rates,
+      stereo channels and impulses at the end of a track. Full-decode fixtures are unchanged.</li>
+</ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
 
@@ -143,7 +150,7 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#unreleased-media">Unreleased — media validation</a><a href="#unreleased-player">Unreleased — playback lifecycle</a><a href="#unreleased-recorder">Unreleased — bounded recording</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#unreleased-media">Unreleased — media validation</a><a href="#unreleased-player">Unreleased — playback lifecycle</a><a href="#unreleased-recorder">Unreleased — bounded recording</a><a href="#unreleased-resampler">Unreleased — streaming resampler</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
   <span>sound_rs v0.4.0 — MIT</span>
