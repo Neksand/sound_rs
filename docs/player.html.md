@@ -31,14 +31,16 @@ del player                                 # closes the stream
 | play_array(arr, rate) | Plays an in-memory array; resampled to the device once, up front. |
 | pause() | Stops producing sound and freezes  position . |
 | resume() | Continues from the paused position, or replays from the start if finished. |
-| stop() | Rewinds to zero, keeps the stream open. |
+| stop() | Clears the source and queue, rewinds to zero, keeps the stream open. Start a new source before resume/seek. |
 | seek(seconds) | Jumps; works while paused. |
-| wait() | Blocks until the source ends (GIL released). |
+| wait() | Waits through the final audio drain (GIL released); returns while paused with the queue intact. |
 | del player | Stops the decoder and closes the stream (or use  with ). |
 
 ## Seeking
 
 Seeking a streamed file is accurate to the frame. Containers can only seek to a packet boundary, so the player reads the packet's real timestamp and drops the difference. A seek to `0.5` in a 16 kHz file lands on frame 8000, not on the nearest packet start.
+
+Seeking preserves pause and queued files. Non-finite positions raise `SoundRsError(code="usage")`; a fed stream or stopped player cannot seek. After natural file completion, seek or resume restarts the current file, including the last file reached through a queue.
 
 ```
 player.play_file("track.flac")
@@ -71,6 +73,8 @@ print(player.is_playing)   # True
 
 `enqueue` lines up the next file; when the current one ends the decoder opens it and continues on the same stream. Rate and channel count may differ between tracks.
 
+A queue requires a file source started with `play_file()`. Enqueuing on an idle, array or fed player raises `usage` instead of creating a queue that cannot advance.
+
 ```
 with sound_rs.Player() as player:
     player.play_file("first.flac")
@@ -83,6 +87,8 @@ with sound_rs.Player() as player:
 ## Pushing audio from Python
 
 For synthesis or a network stream, feed samples instead of a file. `feed` blocks while the buffer is full, so a fast producer cannot exhaust memory. If the buffer cannot drain for five seconds — a paused player, for example — it raises `SoundRsError` with `code="stalled"` instead of hanging.
+
+The timeout measures consecutive time without ring progress, not the duration of a `feed()` call. Long healthy feeds are supported. Closing an empty feed completes cleanly; `wait()` includes the final output drain. `end_feed()` requires a fed source; after a finished feed, call `begin_feed()` to start another.
 
 ```
 import numpy as np
@@ -99,7 +105,7 @@ player.wait()
 
 ## Threading and the GIL
 
-Playback and decoding run on Rust threads, and every blocking call releases the GIL. `player.wait()` in the main thread does not block an `asyncio` loop running in another thread, and `threading.Thread(target=sound_rs.play_audio, ...)` works as expected.
+Playback and decoding run on Rust threads; decoding, feeding and `wait()` release the GIL. Control methods can briefly join a decoder or query metadata while holding it. `player.wait()` in the main thread does not block an `asyncio` loop running in another thread, and `threading.Thread(target=sound_rs.play_audio, ...)` works as expected.
 
 One player is one stream. Do not call methods on the same player from several threads at once; create one player per thread instead.
 
@@ -113,4 +119,4 @@ player = sound_rs.Player(device="MacBook Pro Speakers")
 print(player.device, player.sample_rate, player.channels)
 ```
 
-The device is opened once, at construction. If a device disappears mid-playback, the player raises `SoundRsError` instead of hanging: playback stalls for two seconds without progress, then fails.
+The device is opened once, at construction. A backend failure is signaled atomically and reported as `SoundRsError(code="device")`; create a new Player to reopen it. The no-progress watchdog separately reports `stalled`. This is fault reporting, not automatic reconnection. The output callback never waits for its state mutex: contention produces silence for that callback, so hard real-time or zero-underrun behavior is not promised.

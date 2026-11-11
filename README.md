@@ -37,7 +37,8 @@ recording era begins: write WAV, record straight to a file. Guides for coding ag
 - **Writing:** `write(path, audio, rate, subtype=)` saves WAV as PCM16, PCM24 or float32
   with validated header sizes and finite samples; encoding and writing release the GIL
 - **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push
-  samples from Python with backpressure
+  samples from Python with backpressure. Queueing requires a file source; feed timeouts
+  measure lack of progress, and `wait()` includes the final audio drain
 - **Gapless (MP3, OGG, AAC/MP4):** encoder delay and padding are trimmed, so decoded
   audio lines up with the original
 - **Fast metadata:** `get_audio_info` reads the container header, ~1 ms regardless of

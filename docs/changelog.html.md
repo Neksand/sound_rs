@@ -12,6 +12,14 @@
 
 - Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and disk I/O release the GIL.
 
+## Unreleased — playback lifecycle
+
+- Drain the final written audio prefix, complete empty feeds and time out only stalled producers. Paused wait returns without discarding the queue.
+
+- Preserve pause/queue across seek, track the active queued file, and reject invalid source transitions, non-finite samples/volume, incomplete frames and zero rates.
+
+- Report backend failures through an atomic flag and avoid blocking on callback state contention. Keep hardware recovery and continuous feed resampling as future work.
+
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 
 ## 0.4.0

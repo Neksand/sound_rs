@@ -258,9 +258,9 @@ del player                                 # closes the stream
   <tr><td class="num">play_array(arr, rate)</td><td>Plays an in-memory array; resampled to the device once, up front.</td></tr>
   <tr><td class="num">pause()</td><td>Stops producing sound and freezes <code>position</code>.</td></tr>
   <tr><td class="num">resume()</td><td>Continues from the paused position, or replays from the start if finished.</td></tr>
-  <tr><td class="num">stop()</td><td>Rewinds to zero, keeps the stream open.</td></tr>
+  <tr><td class="num">stop()</td><td>Clears the source and queue, rewinds to zero, keeps the stream open. Start a new source before resume/seek.</td></tr>
   <tr><td class="num">seek(seconds)</td><td>Jumps; works while paused.</td></tr>
-  <tr><td class="num">wait()</td><td>Blocks until the source ends (GIL released).</td></tr>
+  <tr><td class="num">wait()</td><td>Waits through the final audio drain (GIL released); returns while paused with the queue intact.</td></tr>
   <tr><td class="num">del player</td><td>Stops the decoder and closes the stream (or use <code>with</code>).</td></tr>
 </table>
 
@@ -268,6 +268,10 @@ del player                                 # closes the stream
 <p>Seeking a streamed file is accurate to the frame. Containers can only seek to a packet
 boundary, so the player reads the packet's real timestamp and drops the difference. A seek to
 <code>0.5</code> in a 16 kHz file lands on frame 8000, not on the nearest packet start.</p>
+<p>Seeking preserves pause and queued files. Non-finite positions raise
+<code>SoundRsError(code="usage")</code>; a fed stream or stopped player cannot seek.
+After natural file completion, seek or resume restarts the current file, including the last
+file reached through a queue.</p>
 """ + code("""
 player.play_file("track.flac")
 player.seek(90.5)          # 1:30.5
@@ -299,6 +303,8 @@ print(player.is_playing)   # True
 <h2 id="queue">Queue</h2>
 <p><code>enqueue</code> lines up the next file; when the current one ends the decoder opens it
 and continues on the same stream. Rate and channel count may differ between tracks.</p>
+<p>A queue requires a file source started with <code>play_file()</code>. Enqueuing on an idle,
+array or fed player raises <code>usage</code> instead of creating a queue that cannot advance.</p>
 """ + code("""
 with sound_rs.Player() as player:
     player.play_file("first.flac")
@@ -312,6 +318,10 @@ with sound_rs.Player() as player:
 while the buffer is full, so a fast producer cannot exhaust memory. If the buffer cannot drain
 for five seconds — a paused player, for example — it raises
 <code>SoundRsError</code> with <code>code="stalled"</code> instead of hanging.</p>
+<p>The timeout measures consecutive time without ring progress, not the duration of a
+<code>feed()</code> call. Long healthy feeds are supported. Closing an empty feed completes
+cleanly; <code>wait()</code> includes the final output drain. <code>end_feed()</code> requires
+a fed source; after a finished feed, call <code>begin_feed()</code> to start another.</p>
 """ + code("""
 import numpy as np
 import sound_rs
@@ -329,7 +339,8 @@ player.wait()
         "chunk boundaries. Query <code>player.sample_rate</code> and feed that.",
     ) + """
 <h2 id="threading">Threading and the GIL</h2>
-<p>Playback and decoding run on Rust threads, and every blocking call releases the GIL.
+<p>Playback and decoding run on Rust threads; decoding, feeding and <code>wait()</code>
+release the GIL. Control methods can briefly join a decoder or query metadata while holding it.
 <code>player.wait()</code> in the main thread does not block an <code>asyncio</code> loop
 running in another thread, and <code>threading.Thread(target=sound_rs.play_audio, ...)</code>
 works as expected.</p>
@@ -344,9 +355,11 @@ print(sound_rs.list_devices())
 player = sound_rs.Player(device="MacBook Pro Speakers")
 print(player.device, player.sample_rate, player.channels)
 """) + """
-<p>The device is opened once, at construction. If a device disappears mid-playback, the
-player raises <code>SoundRsError</code> instead of hanging: playback stalls for two seconds
-without progress, then fails.</p>
+<p>The device is opened once, at construction. A backend failure is signaled atomically and
+reported as <code>SoundRsError(code="device")</code>; create a new Player to reopen it.
+The no-progress watchdog separately reports <code>stalled</code>. This is fault reporting,
+not automatic reconnection. The output callback never waits for its state mutex: contention
+produces silence for that callback, so hard real-time or zero-underrun behavior is not promised.</p>
 """,
 )
 
@@ -1077,6 +1090,15 @@ page(
   <li>Use checked NumPy read borrows; reject zero or overflowing channel counts.</li>
   <li>Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and
       disk I/O release the GIL.</li>
+</ul>
+<h2 id="unreleased-player">Unreleased — playback lifecycle</h2>
+<ul>
+  <li>Drain the final written audio prefix, complete empty feeds and time out only stalled
+      producers. Paused wait returns without discarding the queue.</li>
+  <li>Preserve pause/queue across seek, track the active queued file, and reject invalid
+      source transitions, non-finite samples/volume, incomplete frames and zero rates.</li>
+  <li>Report backend failures through an atomic flag and avoid blocking on callback state
+      contention. Keep hardware recovery and continuous feed resampling as future work.</li>
 </ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>

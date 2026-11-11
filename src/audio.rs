@@ -933,10 +933,11 @@ impl Stream {
     /// caller is told how many frames to drop via `skip` on the next packet.
     pub fn seek(&mut self, seconds: f64) -> Result<(), String> {
         let rate = self.sample_rate.max(1) as f64;
-        let requested = (seconds.max(0.0) * rate).round() as u64 + self.delay as u64;
+        let requested =
+            ((seconds.max(0.0) * rate).round() as u64).saturating_add(self.delay as u64);
         let limit = self
             .trim_frames
-            .map(|frames| frames + self.delay as u64)
+            .map(|frames| frames.saturating_add(self.delay as u64))
             .unwrap_or(u64::MAX);
         let target = requested.min(limit.saturating_sub(1));
 

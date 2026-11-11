@@ -7,7 +7,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
 use pyo3::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,8 @@ pub struct Core {
     pub volume: f32,
     pub playing: bool,
     pub finished: bool,
+    /// Explicit pause intent survives a final callback or an empty decoder result.
+    paused: bool,
     /// Consumed device samples (interleaved).
     pub position: usize,
     /// Total device samples this source will produce, once known.
@@ -48,6 +50,10 @@ pub struct Core {
     pub queue: std::collections::VecDeque<String>,
     /// Set when a fed stream has been closed by the caller.
     pub end_of_stream: bool,
+    /// The file currently owned by the decoder, including queued handovers.
+    current_path: Option<String>,
+    /// The backend error callback only stores this flag; it never locks or formats.
+    device_failed: Arc<AtomicBool>,
 }
 
 impl Core {
@@ -58,6 +64,7 @@ impl Core {
             volume: 1.0,
             playing: false,
             finished: false,
+            paused: false,
             position: 0,
             total: None,
             base: 0,
@@ -72,6 +79,8 @@ impl Core {
             latency_ms: None,
             queue: std::collections::VecDeque::new(),
             end_of_stream: false,
+            current_path: None,
+            device_failed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -87,7 +96,98 @@ impl Core {
     }
 
     pub fn is_playing(&self) -> bool {
-        self.playing && !self.finished
+        self.playing
+            && !self.paused
+            && !self.finished
+            && !self.device_failed.load(Ordering::Relaxed)
+    }
+
+    fn request_seek(&mut self, seconds: f64) -> Result<(), &'static str> {
+        if !seconds.is_finite() {
+            return Err("seek() needs a finite number of seconds");
+        }
+        if self.memory.is_none() && self.current_path.is_none() {
+            return Err("seek() requires a file or an in-memory source");
+        }
+        let seconds = self
+            .duration()
+            .map(|duration| seconds.max(0.0).min(duration.max(0.0)))
+            .unwrap_or_else(|| seconds.max(0.0));
+        let frames = seconds * self.rate as f64;
+        if !frames.is_finite() || frames >= (usize::MAX / self.channels.max(1)) as f64 {
+            return Err("seek() position is too large");
+        }
+        let target = (frames as usize) * self.channels;
+        // A seek after natural completion starts playback again; a paused
+        // source remains paused and retains its queue.
+        self.playing |= self.finished && !self.paused;
+        self.finished = false;
+        self.drain = Duration::ZERO;
+        if self.memory.is_some() {
+            self.position = target.min(self.total.unwrap_or(usize::MAX));
+            self.base = self.position;
+        } else {
+            self.seek_to = Some(seconds);
+            self.base = target;
+            self.position = target;
+            self.total = None;
+        }
+        Ok(())
+    }
+
+    fn enqueue(&mut self, path: &str) -> Result<(), &'static str> {
+        if self.current_path.is_none() || self.error.is_some() {
+            return Err("enqueue() requires a file started with play_file()");
+        }
+        if self.queue.len() >= 128 {
+            return Err("Queue is full (128 entries); wait for playback to advance");
+        }
+        self.queue.push_back(path.to_string());
+        Ok(())
+    }
+
+    fn pause(&mut self) {
+        self.paused = true;
+        self.playing = false;
+    }
+
+    fn take_queued_path(&mut self) -> Option<String> {
+        // Completion and explicit pause are independent: a pause that wins
+        // the lock after the final callback must still prevent queue handover.
+        let next = if self.finished && !self.paused {
+            self.queue.pop_front()
+        } else {
+            None
+        };
+        if let Some(path) = &next {
+            self.current_path = Some(path.clone());
+            self.consumer = None;
+            self.position = 0;
+            self.base = 0;
+            self.total = None;
+            self.duration = None;
+            self.finished = false;
+            self.end_of_stream = false;
+            self.underruns = 0;
+            self.drain = Duration::ZERO;
+            self.playing = true;
+        }
+        next
+    }
+
+    fn resume(&mut self) -> Result<(), &'static str> {
+        if self.memory.is_none() && self.current_path.is_none() && self.consumer.is_none() {
+            return Err("resume() requires an active source");
+        }
+        if self.finished {
+            if self.end_of_stream {
+                return Err("A finished feed cannot restart; call begin_feed() again");
+            }
+            self.request_seek(0.0)?;
+        }
+        self.paused = false;
+        self.playing = true;
+        Ok(())
     }
 
     /// Called from the audio callback. Writes exactly `output.len()` samples:
@@ -102,7 +202,10 @@ impl Core {
             }
         };
 
-        if !self.playing {
+        if self.device_failed.load(Ordering::Relaxed) {
+            self.playing = false;
+        }
+        if !self.playing || self.paused || self.seek_to.is_some() {
             silence(output);
             return;
         }
@@ -137,9 +240,25 @@ impl Core {
             self.latency_ms = latency.map(|value| value.as_secs_f64() * 1000.0);
         }
 
-        if self.end_of_stream && written < output.len() && self.position > 0 {
+        let source_ended = self.total.is_some_and(|total| self.position >= total)
+            || (self.end_of_stream && self.consumer.as_ref().is_some_and(|ring| ring.is_empty()));
+        if source_ended {
+            if let Some(total) = self.total {
+                self.position = total;
+            }
             self.finished = true;
             self.playing = false;
+            // The timestamp refers to the beginning of this output buffer.
+            // Only the written prefix must reach the device; its silent tail
+            // does not extend the track. An empty source has nothing to drain.
+            self.drain = if self.position == 0 {
+                Duration::ZERO
+            } else {
+                latency.unwrap_or(Duration::from_millis(100))
+                    + Duration::from_secs_f64(
+                        written as f64 / self.channels.max(1) as f64 / self.rate as f64,
+                    )
+            };
             return;
         }
 
@@ -154,21 +273,6 @@ impl Core {
                 self.underruns += 1;
             }
             self.latency_ms = latency.map(|value| value.as_secs_f64() * 1000.0);
-        }
-
-        // The source is done once everything it will ever produce was consumed.
-        if let Some(total) = self.total {
-            if self.position >= total {
-                self.position = total;
-                self.finished = true;
-                self.playing = false;
-                self.drain = latency.unwrap_or(Duration::from_millis(100))
-                    + Duration::from_secs_f64(
-                        (output.len() - written) as f64
-                            / self.channels.max(1) as f64
-                            / self.rate as f64,
-                    );
-            }
         }
     }
 }
@@ -198,13 +302,15 @@ impl Output {
         let supported = device
             .default_output_config()
             .map_err(|e| format!("Cannot query output device: {e}"))?;
+        let config = StreamConfig {
+            channels: supported.channels(),
+            sample_rate: supported.sample_rate(),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        validate_output_config(&config)?;
 
         Ok(Self {
-            config: StreamConfig {
-                channels: supported.channels(),
-                sample_rate: supported.sample_rate(),
-                buffer_size: cpal::BufferSize::Default,
-            },
+            config,
             sample_format: supported.sample_format(),
             device,
             host,
@@ -247,6 +353,14 @@ impl Output {
     }
 }
 
+fn validate_output_config(config: &StreamConfig) -> Result<(), &'static str> {
+    if config.channels == 0 || config.sample_rate.0 == 0 {
+        Err("Output device returned zero channels or sample rate")
+    } else {
+        Ok(())
+    }
+}
+
 fn build_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
@@ -255,25 +369,41 @@ fn build_stream<T>(
 where
     T: SizedSample + FromSample<f32>,
 {
+    let device_failed = core
+        .lock()
+        .map_err(|_| "Player state poisoned")?
+        .device_failed
+        .clone();
     device
         .build_output_stream(
             config,
             move |output: &mut [T], info: &cpal::OutputCallbackInfo| {
                 let stamp = info.timestamp();
                 let latency = stamp.playback.duration_since(&stamp.callback);
-                if let Ok(mut core) = core.lock() {
-                    core.fill(output, latency);
-                }
+                fill_output(&core, output, latency);
             },
-            move |err| eprintln!("Audio stream error: {err}"),
+            move |_err| device_failed.store(true, Ordering::Relaxed),
             None,
         )
         .map_err(|e| format!("Cannot open output stream: {e}"))
 }
 
+fn fill_output<T>(core: &Mutex<Core>, output: &mut [T], latency: Option<Duration>)
+where
+    T: SizedSample + FromSample<f32>,
+{
+    // Controls and decoder handovers may briefly hold the state lock. The
+    // callback must return on time: contention produces silence, without
+    // advancing the source or updating its underrun counter under that lock.
+    if let Ok(mut core) = core.try_lock() {
+        core.fill(output, latency);
+    } else {
+        output.fill(T::from_sample(0.0f32));
+    }
+}
+
 /// Reads packets from the file, converts them to the device layout, resamples,
 /// and pushes them into the ring buffer until the file ends or it is replaced.
-#[allow(clippy::too_many_arguments)]
 fn decode_stream(
     path: String,
     core: Arc<Mutex<Core>>,
@@ -290,142 +420,98 @@ fn decode_stream(
     {
         let mut core = core.lock().map_err(|_| "Player state poisoned")?;
         core.consumer = Some(consumer);
+        core.current_path = Some(path);
     }
 
     let mut pushed = 0usize;
     let mut skip = source.delay_frames();
+    let mut at_end = false;
 
-    loop {
-        // Retired by a newer track, a stop, or a drop of the Player.
+    'decode: loop {
         if generation.load(Ordering::Relaxed) != my_generation {
             return Ok(());
         }
 
-        // Controls are polled once per packet; packets are milliseconds apart.
-        let seek = {
-            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
-            core.seek_to.take()
-        };
+        // Keep the request visible until the replacement ring is installed:
+        // the callback must not consume stale samples while seeking.
+        let seek = core.lock().map_err(|_| "Player state poisoned")?.seek_to;
         if let Some(seconds) = seek {
             source.seek(seconds)?;
             skip = 0;
             resampler.reset();
             let (new_producer, new_consumer) = rtrb::RingBuffer::<f32>::new(capacity);
-            producer = new_producer;
-            {
-                let mut core = core.lock().map_err(|_| "Player state poisoned")?;
+            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
+            if core.seek_to == Some(seconds) {
+                producer = new_producer;
                 core.consumer = Some(new_consumer);
                 core.position = core.base;
                 core.total = None;
                 core.finished = false;
+                core.seek_to = None;
+                pushed = 0;
+                at_end = false;
             }
-            pushed = 0;
+            continue;
+        }
+
+        if at_end {
+            let next = {
+                let mut guard = core.lock().map_err(|_| "Player state poisoned")?;
+                if guard.seek_to.is_some() {
+                    continue;
+                }
+                guard.take_queued_path()
+            };
+            if let Some(next) = next {
+                source = audio::Stream::open(&next)?;
+                resampler = audio::Resampler::new(source.sample_rate, rate, channels as usize);
+                skip = source.delay_frames();
+                let (new_producer, new_consumer) = rtrb::RingBuffer::<f32>::new(capacity);
+                producer = new_producer;
+                let duration = audio::duration_seconds(&next).ok().flatten();
+                let mut core = core.lock().map_err(|_| "Player state poisoned")?;
+                core.consumer = Some(new_consumer);
+                core.duration = duration;
+                // Preserve a pause or seek issued while the next file opened.
+                if let Some(seconds) = core.seek_to {
+                    core.request_seek(seconds)?;
+                }
+                pushed = 0;
+                at_end = false;
+            } else {
+                std::thread::sleep(Duration::from_millis(5));
+            }
             continue;
         }
 
         let Some(chunk) = source.next_chunk(&mut skip)? else {
-            // Drain the resampler's internal buffer, then mark the end.
             for sample in resampler.flush() {
                 while producer.push(sample).is_err() {
                     if generation.load(Ordering::Relaxed) != my_generation {
                         return Ok(());
                     }
+                    if core
+                        .lock()
+                        .map_err(|_| "Player state poisoned")?
+                        .seek_to
+                        .is_some()
+                    {
+                        continue 'decode;
+                    }
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 pushed += 1;
             }
-            {
-                let mut core = core.lock().map_err(|_| "Player state poisoned")?;
-                core.total = Some(core.base + pushed);
-                if pushed == 0 && core.base == 0 {
-                    core.finished = true;
-                    core.playing = false;
-                }
+            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
+            if core.seek_to.is_some() {
+                continue;
             }
-
-            // Stay parked at the end so a later seek can resume. The thread
-            // exits when the track is replaced or the player is dropped.
-            loop {
-                if generation.load(Ordering::Relaxed) != my_generation {
-                    return Ok(());
-                }
-                let (next, seek, drained) = {
-                    let mut guard = core.lock().map_err(|_| "Player state poisoned")?;
-                    // Only hand over once the device consumed the previous
-                    // track; otherwise up to a second of it is cut off.
-                    let drained = guard.total.is_none_or(|total| guard.position >= total);
-                    let next = if drained {
-                        guard.queue.pop_front()
-                    } else {
-                        None
-                    };
-                    // Flip the state under the same lock that popped the queue:
-                    // wait() checks "not playing" and "queue empty" together,
-                    // and a gap between them lets it return mid-handover.
-                    if next.is_some() {
-                        guard.playing = true;
-                        guard.finished = false;
-                    }
-                    (next, guard.seek_to.take(), drained)
-                };
-
-                if let Some(next) = next {
-                    match audio::Stream::open(&next) {
-                        Ok(fresh) => {
-                            source = fresh;
-                            resampler =
-                                audio::Resampler::new(source.sample_rate, rate, channels as usize);
-                            skip = source.delay_frames();
-                            let (new_producer, new_consumer) =
-                                rtrb::RingBuffer::<f32>::new(capacity);
-                            producer = new_producer;
-                            let duration = audio::duration_seconds(&next).ok().flatten();
-                            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
-                            core.consumer = Some(new_consumer);
-                            core.duration = duration;
-                            core.position = 0;
-                            core.base = 0;
-                            core.total = None;
-                            core.finished = false;
-                            core.end_of_stream = false;
-                            core.underruns = 0;
-                            core.playing = true;
-                            pushed = 0;
-                            break;
-                        }
-                        Err(message) => {
-                            let mut core = core.lock().map_err(|_| "Player state poisoned")?;
-                            core.error = Some(message);
-                            core.playing = false;
-                            return Ok(());
-                        }
-                    }
-                }
-                match seek {
-                    Some(seconds) => {
-                        source.seek(seconds)?;
-                        skip = 0;
-                        resampler.reset();
-                        let (new_producer, new_consumer) = rtrb::RingBuffer::<f32>::new(capacity);
-                        producer = new_producer;
-                        let mut core = core.lock().map_err(|_| "Player state poisoned")?;
-                        core.consumer = Some(new_consumer);
-                        // Audio that was still in the old ring must not count
-                        // towards the new play position.
-                        core.position = core.base;
-                        core.total = None;
-                        core.finished = false;
-                        pushed = 0;
-                        break;
-                    }
-                    None => {
-                        // Nothing to do: wait for the device to drain before a
-                        // queued track can take over.
-                        std::thread::sleep(Duration::from_millis(5));
-                        let _ = drained;
-                    }
-                }
+            core.total = Some(core.base.saturating_add(pushed));
+            if pushed == 0 {
+                core.finished = true;
+                core.playing = false;
             }
+            at_end = true;
             continue;
         };
 
@@ -434,6 +520,16 @@ fn decode_stream(
             while producer.push(sample).is_err() {
                 if generation.load(Ordering::Relaxed) != my_generation {
                     return Ok(());
+                }
+                // A paused device cannot drain a full ring. Seek must retire
+                // that ring instead of waiting for resume to make room.
+                if core
+                    .lock()
+                    .map_err(|_| "Player state poisoned")?
+                    .seek_to
+                    .is_some()
+                {
+                    continue 'decode;
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
@@ -451,7 +547,6 @@ pub struct Player {
     thread: Option<std::thread::JoinHandle<Result<(), String>>>,
     feed_producer: Option<rtrb::Producer<f32>>,
     feed_rate: u32,
-    current_path: Option<String>,
 }
 
 #[pymethods]
@@ -477,7 +572,6 @@ impl Player {
             thread: None,
             feed_producer: None,
             feed_rate: 0,
-            current_path: None,
         })
     }
 
@@ -506,20 +600,21 @@ impl Player {
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
 
-        self.current_path = Some(path.to_string());
         let duration = crate::audio::duration_seconds(path).ok().flatten();
-        let expected = duration.map(|seconds| {
-            (seconds * self.output.rate() as f64).round() as usize * self.output.channels()
-        });
         let mut core = self.lock()?;
+        core.current_path = Some(path.to_string());
         core.duration = duration;
-        core.total = expected;
+        // Container duration is advisory. Only the decoder knows the actual
+        // number of output samples; using an estimate can truncate playback.
+        core.total = None;
         core.base = 0;
         core.memory = None;
         core.consumer = None;
         core.position = 0;
         core.finished = false;
         core.error = None;
+        core.error_code = "format";
+        core.drain = Duration::ZERO;
         core.seek_to = None;
         core.underruns = 0;
         core.end_of_stream = false;
@@ -540,6 +635,11 @@ impl Player {
                 if let Err(message) = &result {
                     if let Ok(mut core) = failure_slot.lock() {
                         core.error = Some(message.clone());
+                        core.error_code = if message.starts_with("Cannot open") {
+                            "io"
+                        } else {
+                            "format"
+                        };
                         core.playing = false;
                     }
                 }
@@ -562,6 +662,8 @@ impl Player {
         src_channels: u16,
         sample_rate: u32,
     ) -> PyResult<()> {
+        validate_samples(&samples, src_channels, sample_rate)
+            .map_err(|message| error_with("usage", message.into()))?;
         self.feed_producer = None;
         self.stop();
         let channels = self.output.channels() as u16;
@@ -569,12 +671,7 @@ impl Player {
             samples
         } else {
             let folded = convert_channels(&samples, src_channels, channels);
-            resample_all(
-                &folded,
-                sample_rate.max(1),
-                self.output.rate(),
-                channels as usize,
-            )
+            resample_all(&folded, sample_rate, self.output.rate(), channels as usize)
         };
         let total = ready.len();
 
@@ -587,6 +684,8 @@ impl Player {
         core.total = Some(total);
         core.finished = false;
         core.error = None;
+        core.error_code = "format";
+        core.drain = Duration::ZERO;
         core.seek_to = None;
         core.underruns = 0;
         core.end_of_stream = false;
@@ -597,15 +696,19 @@ impl Player {
     /// Append a path to the queue. When the current track ends, the next one
     /// starts automatically, with its own rate and channel layout.
     fn enqueue(&mut self, path: &str) -> PyResult<()> {
-        let mut core = self.lock()?;
-        if core.queue.len() >= 128 {
+        if self
+            .thread
+            .as_ref()
+            .is_none_or(|thread| thread.is_finished())
+        {
             return Err(error_with(
                 "usage",
-                "Queue is full (128 entries); wait for playback to advance".to_string(),
+                "enqueue() requires a file started with play_file()".to_string(),
             ));
         }
-        core.queue.push_back(path.to_string());
-        Ok(())
+        self.lock()?
+            .enqueue(path)
+            .map_err(|message| error_with("usage", message.into()))
     }
 
     /// Paths waiting behind the current track.
@@ -621,6 +724,7 @@ impl Player {
 
     /// Start a fed stream: samples arrive through `feed()` instead of a file.
     fn begin_feed(&mut self, sample_rate: u32) -> PyResult<()> {
+        validate_sample_rate(sample_rate).map_err(|message| error_with("usage", message.into()))?;
         self.stop();
         let channels = self.output.channels() as u16;
         let capacity = (self.output.rate() as f64 * RING_SECONDS) as usize * channels as usize;
@@ -635,19 +739,30 @@ impl Player {
             core.duration = None;
             core.finished = false;
             core.error = None;
+            core.error_code = "format";
+            core.drain = Duration::ZERO;
             core.underruns = 0;
             core.end_of_stream = false;
             core.playing = true;
         }
         self.feed_producer = Some(producer);
-        self.feed_rate = sample_rate.max(1);
+        self.feed_rate = sample_rate;
         Ok(())
     }
 
     /// Push samples into a fed stream. Blocks while the ring is full.
     /// Expects float32 in `(frames,)` or `(channels, frames)`.
     pub(crate) fn feed(&mut self, py: Python<'_>, array: Bound<'_, PyAny>) -> PyResult<()> {
+        let device_failed = self.lock()?.device_failed.clone();
+        if self.feed_producer.is_none() {
+            return Err(error_with(
+                "usage",
+                "Call begin_feed() before feed(), and not after stop()".to_string(),
+            ));
+        }
         let (samples, channels) = crate::numpy_samples(&array)?;
+        validate_samples(&samples, channels, self.feed_rate)
+            .map_err(|message| error_with("usage", message.into()))?;
         let device_channels = self.output.channels() as u16;
         let mut ready = convert_channels(&samples, channels, device_channels);
         if self.feed_rate != self.output.rate() {
@@ -669,26 +784,32 @@ impl Player {
             }
         };
 
-        // The consumer only advances in the audio callback, which cannot run
-        // while this call holds the GIL-free borrow, so a full buffer that
-        // never drains has to time out instead of spinning forever.
-        let result = py.allow_threads(|| -> Result<(), &'static str> {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            for sample in ready {
-                while producer.push(sample).is_err() {
-                    if Instant::now() > deadline {
-                        return Err("feed() could not drain: is playback paused?");
-                    }
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-            }
-            Ok(())
+        let result = py.allow_threads(|| {
+            feed_samples(producer, &ready, Duration::from_secs(5), &device_failed)
         });
-        result.map_err(|message| error_with("stalled", message.to_string()))
+        result.map_err(|message| {
+            let code = if device_failed.load(Ordering::Relaxed) {
+                "device"
+            } else {
+                "stalled"
+            };
+            error_with(code, message.to_string())
+        })
     }
 
     /// No more samples will arrive; playback finishes when the ring drains.
     fn end_feed(&mut self) -> PyResult<()> {
+        if self.feed_producer.is_none() {
+            // Closing an already-closed feed is harmless, but closing a file
+            // stream must not turn temporary decoder starvation into EOF.
+            if self.lock()?.end_of_stream {
+                return Ok(());
+            }
+            return Err(error_with(
+                "usage",
+                "Call begin_feed() before end_feed()".to_string(),
+            ));
+        }
         self.feed_producer = None;
         let mut core = self.lock()?;
         core.end_of_stream = true;
@@ -697,19 +818,26 @@ impl Player {
 
     /// Pause playback; the stream stays open.
     fn pause(&self) -> PyResult<()> {
-        self.lock()?.playing = false;
+        self.lock()?.pause();
         Ok(())
     }
 
     /// Resume from where it was paused.
     fn resume(&self) -> PyResult<()> {
         let mut core = self.lock()?;
-        if core.finished {
-            core.position = 0;
-            core.finished = false;
+        if core.current_path.is_some()
+            && self
+                .thread
+                .as_ref()
+                .is_none_or(|thread| thread.is_finished())
+        {
+            return Err(error_with(
+                "usage",
+                "The decoder has stopped; call play_file() again".into(),
+            ));
         }
-        core.playing = true;
-        Ok(())
+        core.resume()
+            .map_err(|message| error_with("usage", message.into()))
     }
 
     /// Stop and rewind to the start.
@@ -723,6 +851,7 @@ impl Player {
         if let Ok(mut core) = self.core.lock() {
             core.playing = false;
             core.finished = false;
+            core.paused = false;
             core.position = 0;
             core.consumer = None;
             core.memory = None;
@@ -731,42 +860,28 @@ impl Player {
             core.duration = None;
             core.queue.clear();
             core.end_of_stream = false;
+            core.drain = Duration::ZERO;
+            core.current_path = None;
         }
     }
 
     /// Jump to `seconds`. Works for both streamed files and arrays.
-    fn seek(&mut self, py: Python<'_>, seconds: f64) -> PyResult<()> {
-        let seconds = seconds.max(0.0);
-        let restart = {
-            let core = self.lock()?;
-            core.memory.is_none() && (core.finished || !core.playing)
-        };
-        let path = self.current_path.clone();
-        if restart {
-            if let Some(path) = path {
-                // The decoder parks at the end of a track; restarting is the
-                // reliable way to play from a new position.
-                self.play_file(py, &path)?;
-            }
-        }
+    fn seek(&mut self, seconds: f64) -> PyResult<()> {
         let mut core = self.lock()?;
-        let ch = core.channels;
-        let rate = core.rate;
-        let target = (seconds * rate as f64) as usize * ch;
-        core.finished = false;
-        if core.memory.is_some() {
-            core.position = target.min(core.total.unwrap_or(usize::MAX));
-            core.base = core.position;
-        } else {
-            core.seek_to = Some(seconds);
-            core.base = target;
-            core.position = target;
-            // A seek after the track ended starts playback again.
-            if core.consumer.is_some() {
-                core.playing = true;
-            }
+        if core.memory.is_none()
+            && core.current_path.is_some()
+            && self
+                .thread
+                .as_ref()
+                .is_none_or(|thread| thread.is_finished())
+        {
+            return Err(error_with(
+                "usage",
+                "The decoder has stopped; call play_file() again".into(),
+            ));
         }
-        Ok(())
+        core.request_seek(seconds)
+            .map_err(|message| error_with("usage", message.into()))
     }
 
     #[getter]
@@ -804,6 +919,9 @@ impl Player {
 
     #[setter]
     pub(crate) fn set_volume(&self, volume: f32) -> PyResult<()> {
+        if !volume.is_finite() {
+            return Err(error_with("usage", "volume must be finite".to_string()));
+        }
         self.lock()?.volume = volume.clamp(0.0, 4.0);
         Ok(())
     }
@@ -811,12 +929,14 @@ impl Player {
     /// Block until the current source finishes playing.
     pub(crate) fn wait(&mut self, py: Python<'_>) -> PyResult<()> {
         let core = self.core.clone();
-        let drain = py.allow_threads(move || wait_loop(core));
-        if let Some(message) = self.lock().map(|mut c| c.error.take()).ok().flatten() {
-            let code = self.lock().map(|c| c.error_code).unwrap_or("format");
-            return Err(error_with(code, message));
+        py.allow_threads(move || {
+            let drain = wait_loop(core);
+            std::thread::sleep(drain.unwrap_or(Duration::from_millis(20)));
+        });
+        let mut core = self.lock()?;
+        if let Some(message) = core.error.take() {
+            return Err(error_with(core.error_code, message));
         }
-        std::thread::sleep(drain.unwrap_or(Duration::from_millis(20)));
         Ok(())
     }
 
@@ -846,10 +966,67 @@ impl Drop for Player {
 
 impl Player {
     fn lock(&self) -> PyResult<std::sync::MutexGuard<'_, Core>> {
-        self.core
+        let core = self
+            .core
             .lock()
-            .map_err(|_| error("Player state poisoned".to_string()))
+            .map_err(|_| error("Player state poisoned".to_string()))?;
+        if core.device_failed.load(Ordering::Relaxed) {
+            return Err(error_with(
+                "device",
+                "Output stream failed; create a new Player".to_string(),
+            ));
+        }
+        Ok(core)
     }
+}
+
+fn validate_sample_rate(sample_rate: u32) -> Result<(), &'static str> {
+    if sample_rate == 0 {
+        Err("sample_rate must be greater than zero")
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_samples(samples: &[f32], channels: u16, sample_rate: u32) -> Result<(), &'static str> {
+    validate_sample_rate(sample_rate)?;
+    if channels == 0 || !samples.len().is_multiple_of(channels as usize) {
+        return Err("samples must contain complete frames with at least one channel");
+    }
+    if samples.iter().any(|sample| !sample.is_finite()) {
+        return Err("audio samples must be finite");
+    }
+    Ok(())
+}
+
+/// Ring backpressure is independent of Python and can be tested without a device.
+fn feed_samples(
+    producer: &mut rtrb::Producer<f32>,
+    samples: &[f32],
+    stall: Duration,
+    device_failed: &AtomicBool,
+) -> Result<(), &'static str> {
+    for &sample in samples {
+        if device_failed.load(Ordering::Relaxed) {
+            return Err("Output stream failed; create a new Player");
+        }
+        if producer.push(sample).is_ok() {
+            continue;
+        }
+        // Only time a full ring. A large feed can take arbitrarily long while
+        // the callback is making progress; the GIL stays released throughout.
+        let blocked_since = Instant::now();
+        while producer.push(sample).is_err() {
+            if device_failed.load(Ordering::Relaxed) {
+                return Err("Output stream failed; create a new Player");
+            }
+            if blocked_since.elapsed() > stall {
+                return Err("feed() could not drain: is playback paused?");
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    Ok(())
 }
 
 /// Waits without holding the GIL, with a stall watchdog.
@@ -860,20 +1037,31 @@ fn wait_loop(shared: Arc<Mutex<Core>>) -> Option<Duration> {
         let mut last_change = Instant::now();
         loop {
             let (playing, finished, position, drain, error, queued) = match shared.lock() {
-                Ok(core) => (
-                    core.playing,
-                    core.finished,
-                    core.position,
-                    core.drain,
-                    core.error.is_some(),
-                    !core.queue.is_empty(),
-                ),
+                Ok(mut core) => {
+                    if core.device_failed.load(Ordering::Relaxed) {
+                        core.playing = false;
+                        return Some(Duration::ZERO);
+                    }
+                    if core.paused {
+                        return Some(core.drain);
+                    }
+                    (
+                        core.playing,
+                        core.finished,
+                        core.position,
+                        core.drain,
+                        core.error.is_some(),
+                        !core.queue.is_empty(),
+                    )
+                }
                 Err(_) => return None,
             };
             if error {
                 return Some(Duration::ZERO);
             }
-            if (!playing || finished) && !queued {
+            // A paused track returns with its queue intact. A completed track
+            // with queued work waits for the worker's atomic handover.
+            if ((!playing || finished) && !queued) || (!playing && !finished) {
                 return Some(drain);
             }
             if position != last {
@@ -881,6 +1069,8 @@ fn wait_loop(shared: Arc<Mutex<Core>>) -> Option<Duration> {
                 last_change = Instant::now();
             } else if last_change.elapsed() > STALL {
                 if let Ok(mut core) = shared.lock() {
+                    core.error_code = "stalled";
+                    core.playing = false;
                     core.error = Some(
                         "Playback stalled for 2s: the output device stopped responding".to_string(),
                     );
@@ -905,6 +1095,532 @@ impl core::fmt::Debug for Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pause_between_completion_and_queue_handover_retains_the_queue() {
+        let mut core = Core::new(1, 1000);
+        core.current_path = Some("first.wav".into());
+        let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(1);
+        producer.push(0.5).unwrap();
+        core.consumer = Some(consumer);
+        core.total = Some(1);
+        core.playing = true;
+        core.enqueue("second.wav").unwrap();
+
+        // These steps run under the same state lock in production. Pause
+        // wins the race before the worker can select the next queued file.
+        core.fill(&mut [0.0f32; 1], Some(Duration::ZERO));
+        assert!(core.finished);
+        core.pause();
+        assert_eq!(core.take_queued_path(), None);
+        assert!(!core.playing);
+        assert_eq!(core.current_path.as_deref(), Some("first.wav"));
+        assert_eq!(core.queue.front().map(String::as_str), Some("second.wav"));
+    }
+
+    #[test]
+    fn seeking_an_explicitly_paused_completed_file_keeps_it_paused() {
+        let mut core = Core::new(1, 1000);
+        core.current_path = Some("current.wav".into());
+        core.finished = true;
+        core.pause();
+        core.request_seek(0.0).unwrap();
+        assert!(!core.playing);
+        assert_eq!(core.seek_to, Some(0.0));
+    }
+
+    #[test]
+    fn wait_on_a_paused_completed_queue_returns_without_a_stall() {
+        let mut core = Core::new(1, 1000);
+        core.current_path = Some("first.wav".into());
+        core.finished = true;
+        core.enqueue("second.wav").unwrap();
+        core.pause();
+        let shared = Arc::new(Mutex::new(core));
+        assert_eq!(wait_loop(shared.clone()), Some(Duration::ZERO));
+        let mut core = shared.lock().unwrap();
+        assert!(core.error.is_none());
+        assert_eq!(core.queue.len(), 1);
+        core.resume().unwrap();
+        assert!(!core.paused);
+        assert!(core.playing);
+        assert_eq!(core.seek_to, Some(0.0));
+    }
+
+    #[test]
+    fn output_callback_returns_silence_without_waiting_for_the_control_lock() {
+        let mut core = Core::new(1, 1000);
+        core.memory = Some(Arc::new(vec![0.5; 8]));
+        core.total = Some(8);
+        core.playing = true;
+        let shared = Arc::new(Mutex::new(core));
+        let held = shared.lock().unwrap();
+        let callback_core = shared.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let callback = std::thread::spawn(move || {
+            let mut output = [1.0f32; 8];
+            fill_output(&callback_core, &mut output, Some(Duration::ZERO));
+            send.send(output).unwrap();
+        });
+        let output = receive.recv_timeout(Duration::from_millis(250));
+        // Release before assertions so a regression cannot strand the test
+        // thread in a blocking lock or make the process hang during cleanup.
+        drop(held);
+        callback.join().unwrap();
+        assert_eq!(output.unwrap(), [0.0; 8]);
+        assert_eq!(shared.lock().unwrap().position, 0);
+
+        let mut output = [0.0f32; 8];
+        fill_output(&shared, &mut output, Some(Duration::ZERO));
+        assert_eq!(output, [0.5; 8]);
+        assert_eq!(shared.lock().unwrap().position, 8);
+    }
+
+    #[test]
+    fn output_configuration_rejects_zero_channels_and_rates() {
+        for (channels, rate) in [(0, 48_000), (2, 0), (0, 0)] {
+            let config = StreamConfig {
+                channels,
+                sample_rate: cpal::SampleRate(rate),
+                buffer_size: cpal::BufferSize::Default,
+            };
+            assert!(validate_output_config(&config).is_err());
+        }
+        let config = StreamConfig {
+            channels: 2,
+            sample_rate: cpal::SampleRate(48_000),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        assert!(validate_output_config(&config).is_ok());
+    }
+
+    struct TestDecoder {
+        core: Arc<Mutex<Core>>,
+        generation: Arc<AtomicU64>,
+        thread: Option<std::thread::JoinHandle<Result<(), String>>>,
+    }
+
+    impl TestDecoder {
+        fn start(path: &str, mut core: Core) -> Self {
+            core.current_path = Some(path.to_string());
+            let rate = core.rate;
+            let channels = core.channels as u16;
+            let core = Arc::new(Mutex::new(core));
+            let generation = Arc::new(AtomicU64::new(0));
+            let worker_core = core.clone();
+            let worker_generation = generation.clone();
+            let path = path.to_string();
+            let thread = std::thread::spawn(move || {
+                decode_stream(path, worker_core, worker_generation, 0, rate, channels)
+            });
+            Self {
+                core,
+                generation,
+                thread: Some(thread),
+            }
+        }
+
+        fn poll(&self, mut condition: impl FnMut(&mut Core) -> bool) -> bool {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(2) {
+                if condition(&mut self.core.lock().unwrap()) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            false
+        }
+    }
+
+    impl Drop for TestDecoder {
+        fn drop(&mut self) {
+            self.generation.fetch_add(1, Ordering::Relaxed);
+            let result = self.thread.take().unwrap().join();
+            if !std::thread::panicking() {
+                assert_eq!(result.unwrap(), Ok(()));
+            }
+        }
+    }
+
+    #[test]
+    fn a_paused_decoder_processes_seek_even_when_its_ring_is_full() {
+        let path =
+            std::env::temp_dir().join(format!("sound_rs_paused_seek_{}.wav", std::process::id()));
+        let samples: Vec<_> = (0..3000).map(|i| i as f32 / 4000.0).collect();
+        crate::writer::write(
+            path.to_str().unwrap(),
+            &samples,
+            1,
+            1000,
+            crate::writer::Subtype::Float32,
+        )
+        .unwrap();
+        let mut core = Core::new(1, 1000);
+        core.duration = Some(3.0);
+        core.queue.push_back("next.wav".into());
+        let worker = TestDecoder::start(path.to_str().unwrap(), core);
+        assert!(worker.poll(|core| core
+            .consumer
+            .as_ref()
+            .is_some_and(|ring| ring.slots() == 1000)));
+        worker.core.lock().unwrap().request_seek(1.5).unwrap();
+        assert!(worker.poll(|core| core.seek_to.is_none()
+            && core.consumer.as_ref().is_some_and(|ring| ring.slots() > 0)));
+        {
+            let mut core = worker.core.lock().unwrap();
+            assert!(!core.playing);
+            assert_eq!(core.position, 1500);
+            assert_eq!(core.queue.front().map(String::as_str), Some("next.wav"));
+            assert_eq!(
+                *core.consumer.as_ref().unwrap().peek().unwrap(),
+                samples[1500]
+            );
+            core.resume().unwrap();
+            let mut output = [0.0f32; 8];
+            core.fill(&mut output, Some(Duration::ZERO));
+            assert_eq!(&output, &samples[1500..1508]);
+            assert_eq!(core.position, 1508);
+        }
+        drop(worker);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn seek_after_queue_completion_uses_the_current_file() {
+        let path_a =
+            std::env::temp_dir().join(format!("sound_rs_queue_a_{}.wav", std::process::id()));
+        let path_b =
+            std::env::temp_dir().join(format!("sound_rs_queue_b_{}.wav", std::process::id()));
+        for (path, value) in [(&path_a, 0.25), (&path_b, 0.75)] {
+            crate::writer::write(
+                path.to_str().unwrap(),
+                &[value; 100],
+                1,
+                1000,
+                crate::writer::Subtype::Float32,
+            )
+            .unwrap();
+        }
+        let mut core = Core::new(1, 1000);
+        core.playing = true;
+        core.queue.push_back(path_b.to_str().unwrap().to_string());
+        let worker = TestDecoder::start(path_a.to_str().unwrap(), core);
+        let mut played = Vec::new();
+        assert!(worker.poll(|core| {
+            let mut output = [0.0f32; 64];
+            core.fill(&mut output, Some(Duration::ZERO));
+            played.extend(output);
+            core.current_path.as_deref() == path_b.to_str() && core.finished
+        }));
+        assert_eq!(played.iter().filter(|sample| **sample == 0.25).count(), 100);
+        assert_eq!(played.iter().filter(|sample| **sample == 0.75).count(), 100);
+        worker.core.lock().unwrap().request_seek(0.05).unwrap();
+        assert!(worker.poll(|core| core.seek_to.is_none()
+            && core.consumer.as_ref().is_some_and(|ring| ring.slots() > 0)));
+        {
+            let mut core = worker.core.lock().unwrap();
+            let mut output = [0.0f32; 1];
+            core.fill(&mut output, Some(Duration::ZERO));
+            assert_eq!(output, [0.75]);
+            assert_eq!(core.position, 51);
+            assert!(core.queue.is_empty());
+        }
+        drop(worker);
+        std::fs::remove_file(path_a).unwrap();
+        std::fs::remove_file(path_b).unwrap();
+    }
+
+    #[test]
+    fn audio_validation_rejects_zero_rates_incomplete_frames_and_nonfinite_samples() {
+        assert!(validate_sample_rate(0).is_err());
+        assert!(validate_samples(&[], 0, 48_000).is_err());
+        assert!(validate_samples(&[0.5], 2, 48_000).is_err());
+        assert!(validate_samples(&[0.5], 1, 0).is_err());
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(validate_samples(&[bad], 1, 48_000).is_err());
+        }
+        assert!(validate_samples(&[], 2, 48_000).is_ok());
+        assert!(validate_samples(&[f32::MAX, -f32::MAX], 2, 48_000).is_ok());
+    }
+
+    #[test]
+    fn device_failure_silences_output_and_wakes_waiters() {
+        let mut core = Core::new(1, 1000);
+        core.memory = Some(Arc::new(vec![0.5; 8]));
+        core.playing = true;
+        core.device_failed.store(true, Ordering::Relaxed);
+        let mut output = [1.0f32; 8];
+        core.fill(&mut output, None);
+        assert_eq!(output, [0.0; 8]);
+        assert!(!core.is_playing());
+        assert_eq!(core.position, 0);
+        let shared = Arc::new(Mutex::new(core));
+        assert_eq!(wait_loop(shared), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn device_failure_interrupts_backpressure_without_waiting_for_the_watchdog() {
+        let (mut producer, _consumer) = rtrb::RingBuffer::<f32>::new(1);
+        let failed = Arc::new(AtomicBool::new(false));
+        let signal = failed.clone();
+        let callback = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            signal.store(true, Ordering::Relaxed);
+        });
+        assert_eq!(
+            feed_samples(&mut producer, &[0.5, 0.5], Duration::from_secs(5), &failed),
+            Err("Output stream failed; create a new Player")
+        );
+        callback.join().unwrap();
+    }
+
+    #[test]
+    fn resume_restarts_completed_files_but_rejects_finished_feeds() {
+        let mut core = Core::new(1, 1000);
+        assert!(core.resume().is_err());
+        core.current_path = Some("current.wav".into());
+        core.finished = true;
+        core.position = 100;
+        core.resume().unwrap();
+        assert_eq!(core.seek_to, Some(0.0));
+        assert_eq!(core.position, 0);
+        assert!(core.playing);
+        core.finished = true;
+        core.end_of_stream = true;
+        assert!(core.resume().is_err());
+    }
+
+    #[test]
+    fn invalid_seeks_leave_playback_state_unchanged() {
+        for seconds in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, f64::MAX] {
+            let mut core = Core::new(2, 48_000);
+            core.current_path = Some("track.wav".to_string());
+            core.position = 100;
+            core.base = 100;
+            core.playing = true;
+            assert!(core.request_seek(seconds).is_err());
+            assert_eq!(core.position, 100);
+            assert_eq!(core.base, 100);
+            assert_eq!(core.seek_to, None);
+            assert!(core.playing);
+        }
+    }
+
+    #[test]
+    fn decoder_seek_handles_saturating_timestamps_without_panicking() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tone.m4a");
+        let mut source = audio::Stream::open(path.to_str().unwrap()).unwrap();
+        assert!(source.delay > 0, "fixture must exercise priming addition");
+        source.seek(f64::MAX).unwrap();
+    }
+
+    #[test]
+    fn a_paused_queue_does_not_trigger_the_stall_watchdog() {
+        let mut core = Core::new(1, 1000);
+        core.current_path = Some("current.wav".into());
+        core.enqueue("next.wav").unwrap();
+        let shared = Arc::new(Mutex::new(core));
+        assert_eq!(wait_loop(shared.clone()), Some(Duration::ZERO));
+        let core = shared.lock().unwrap();
+        assert!(core.error.is_none());
+        assert_eq!(core.queue.len(), 1);
+    }
+
+    #[test]
+    fn paused_seek_preserves_pause_and_queue() {
+        let mut core = Core::new(2, 48_000);
+        let (_producer, consumer) = rtrb::RingBuffer::<f32>::new(8);
+        core.consumer = Some(consumer);
+        core.current_path = Some("track.wav".to_string());
+        core.queue.push_back("next.wav".to_string());
+        core.request_seek(1.0).unwrap();
+        assert!(!core.playing);
+        assert_eq!(core.seek_to, Some(1.0));
+        assert_eq!(core.position, 96_000);
+        assert_eq!(core.queue.front().map(String::as_str), Some("next.wav"));
+    }
+
+    #[test]
+    fn pending_seek_silences_stale_ring_samples() {
+        let mut core = Core::new(1, 1000);
+        let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(8);
+        producer.push(0.5).unwrap();
+        core.consumer = Some(consumer);
+        core.current_path = Some("track.wav".to_string());
+        core.playing = true;
+        core.request_seek(1.0).unwrap();
+        let mut out = [1.0f32; 8];
+        core.fill(&mut out, None);
+        assert_eq!(out, [0.0; 8]);
+        assert_eq!(core.position, 1000);
+        assert_eq!(core.consumer.as_ref().unwrap().slots(), 1);
+        assert_eq!(core.underruns, 0);
+    }
+
+    #[test]
+    fn seek_and_enqueue_reject_sources_without_a_decoder() {
+        for feed in [false, true] {
+            let mut core = Core::new(1, 1000);
+            if feed {
+                let (_producer, consumer) = rtrb::RingBuffer::<f32>::new(8);
+                core.consumer = Some(consumer);
+            }
+            assert!(core.request_seek(0.1).is_err());
+            assert!(core.enqueue("next.wav").is_err());
+            assert!(core.queue.is_empty());
+        }
+        let mut core = Core::new(1, 1000);
+        core.memory = Some(Arc::new(vec![0.5; 100]));
+        core.total = Some(100);
+        assert!(core.enqueue("next.wav").is_err());
+        assert!(core.request_seek(0.05).is_ok());
+        assert_eq!(core.position, 50);
+    }
+
+    #[test]
+    fn memory_seek_clamps_and_restarts_only_finished_playback() {
+        let mut core = Core::new(2, 1000);
+        core.memory = Some(Arc::new(vec![0.5; 200]));
+        core.total = Some(200);
+        core.request_seek(0.05).unwrap();
+        assert_eq!(core.position, 100);
+        assert!(!core.playing);
+        core.request_seek(10.0).unwrap();
+        assert_eq!(core.position, 200);
+        core.finished = true;
+        core.request_seek(-1.0).unwrap();
+        assert_eq!(core.position, 0);
+        assert!(core.playing && !core.finished);
+    }
+
+    #[test]
+    fn drain_waits_for_the_written_prefix_not_the_silent_tail() {
+        for samples in [2, 8] {
+            let mut core = Core::new(1, 1000);
+            core.memory = Some(Arc::new(vec![0.5; samples]));
+            core.total = Some(samples);
+            core.playing = true;
+            core.fill(&mut [0.0f32; 8], Some(Duration::from_millis(10)));
+            assert_eq!(core.drain, Duration::from_millis(10 + samples as u64));
+        }
+    }
+
+    #[test]
+    fn empty_sources_finish_without_a_drain_delay() {
+        for fed in [false, true] {
+            let mut core = Core::new(1, 1000);
+            if fed {
+                let (producer, consumer) = rtrb::RingBuffer::<f32>::new(8);
+                drop(producer);
+                core.consumer = Some(consumer);
+                core.end_of_stream = true;
+            } else {
+                core.memory = Some(Arc::new(Vec::new()));
+                core.total = Some(0);
+            }
+            core.playing = true;
+            let mut output = [1.0f32; 8];
+            core.fill(&mut output, Some(Duration::from_millis(10)));
+            assert!(core.finished && !core.playing);
+            assert_eq!(core.drain, Duration::ZERO);
+            assert_eq!(output, [0.0; 8]);
+            assert_eq!(core.underruns, 0);
+        }
+    }
+
+    #[test]
+    fn closed_feed_finishes_on_its_last_partial_or_full_callback() {
+        for samples in [2, 8] {
+            let mut core = Core::new(1, 1000);
+            let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(8);
+            for _ in 0..samples {
+                producer.push(0.5).unwrap();
+            }
+            drop(producer);
+            core.consumer = Some(consumer);
+            core.end_of_stream = true;
+            core.playing = true;
+            let mut output = [1.0f32; 8];
+            core.fill(&mut output, Some(Duration::from_millis(10)));
+            assert!(core.finished && !core.playing);
+            assert_eq!(core.position, samples);
+            assert_eq!(core.drain, Duration::from_millis(10 + samples as u64));
+            assert_eq!(core.underruns, 0);
+            assert!(output[..samples].iter().all(|sample| *sample == 0.5));
+            assert!(output[samples..].iter().all(|sample| *sample == 0.0));
+        }
+    }
+
+    #[test]
+    fn closing_a_feed_does_not_discard_buffered_samples() {
+        let mut core = Core::new(1, 1000);
+        let (mut producer, consumer) = rtrb::RingBuffer::<f32>::new(10);
+        for _ in 0..10 {
+            producer.push(0.5).unwrap();
+        }
+        drop(producer);
+        core.consumer = Some(consumer);
+        core.end_of_stream = true;
+        core.playing = true;
+        core.fill(&mut [0.0f32; 8], None);
+        assert!(core.playing && !core.finished);
+        core.fill(&mut [0.0f32; 8], None);
+        assert!(core.finished && !core.playing);
+        assert_eq!(core.position, 10);
+        assert_eq!(core.underruns, 0);
+    }
+
+    #[test]
+    fn watchdog_reports_stalled_code_and_stops_playback() {
+        let shared = Arc::new(Mutex::new(Core::new(1, 1000)));
+        shared.lock().unwrap().playing = true;
+        assert_eq!(wait_loop(shared.clone()), Some(Duration::ZERO));
+        let core = shared.lock().unwrap();
+        assert_eq!(core.error_code, "stalled");
+        assert!(core.error.is_some());
+        assert!(!core.playing);
+    }
+
+    #[test]
+    fn feed_timeout_measures_stalls_instead_of_total_playback_time() {
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(1);
+        let reader = std::thread::spawn(move || {
+            let mut received = Vec::new();
+            loop {
+                match consumer.pop() {
+                    Ok(sample) => {
+                        received.push(sample);
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) if consumer.is_abandoned() => return received,
+                    Err(_) => std::thread::sleep(Duration::from_millis(1)),
+                }
+            }
+        });
+        let samples: Vec<_> = (0..30).map(|value| value as f32).collect();
+        let result = feed_samples(
+            &mut producer,
+            &samples,
+            Duration::from_millis(200),
+            &AtomicBool::new(false),
+        );
+        drop(producer);
+        let received = reader.join().unwrap();
+        assert_eq!(result, Ok(()));
+        assert_eq!(received, samples);
+    }
+
+    #[test]
+    fn feed_times_out_when_the_consumer_does_not_advance() {
+        let (mut producer, _consumer) = rtrb::RingBuffer::<f32>::new(1);
+        let result = feed_samples(
+            &mut producer,
+            &[1.0, 2.0],
+            Duration::from_millis(20),
+            &AtomicBool::new(false),
+        );
+        assert!(result.is_err());
+    }
 
     #[test]
     fn memory_source_plays_volume_and_stops_at_the_end() {
@@ -985,5 +1701,41 @@ mod tests {
         core.fill(&mut out, None);
         assert!(out.iter().all(|&s| s == 0.0));
         assert_eq!(core.position, 0);
+    }
+    #[test]
+    fn decoder_respects_a_pause_after_the_final_callback() {
+        let path_a =
+            std::env::temp_dir().join(format!("review_pause_a_{}.wav", std::process::id()));
+        let path_b =
+            std::env::temp_dir().join(format!("review_pause_b_{}.wav", std::process::id()));
+        for (path, value) in [(&path_a, 0.25), (&path_b, 0.75)] {
+            crate::writer::write(
+                path.to_str().unwrap(),
+                &[value; 100],
+                1,
+                1000,
+                crate::writer::Subtype::Float32,
+            )
+            .unwrap();
+        }
+        let mut core = Core::new(1, 1000);
+        core.playing = true;
+        core.queue.push_back(path_b.to_str().unwrap().to_string());
+        let worker = TestDecoder::start(path_a.to_str().unwrap(), core);
+        assert!(worker.poll(|core| core.total == Some(100)));
+        {
+            let mut core = worker.core.lock().unwrap();
+            core.fill(&mut [0.0f32; 100], Some(Duration::ZERO));
+            assert!(core.finished);
+            core.pause();
+        }
+        let handed_over = worker.poll(|core| core.current_path.as_deref() == path_b.to_str());
+        drop(worker);
+        std::fs::remove_file(path_a).unwrap();
+        std::fs::remove_file(path_b).unwrap();
+        assert!(
+            !handed_over,
+            "explicit pause after final callback must preserve queue"
+        );
     }
 }
