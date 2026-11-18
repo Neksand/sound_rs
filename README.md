@@ -9,41 +9,45 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](https://github.com/Neksand/sound_rs/blob/master/LICENSE)
 
 **sound_rs** is a fast, Rust-powered audio library for Python that I built and
-maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia) (plus
-minimp3 for MP3), resampling with [rubato](https://github.com/HEnquist/rubato),
+maintain — decoding with [symphonia](https://github.com/pdeljanov/Symphonia),
+resampling with [rubato](https://github.com/HEnquist/rubato),
 output through [cpal](https://github.com/RustAudio/cpal).
 
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.4.2](https://github.com/Neksand/sound_rs/releases/tag/v0.4.2) — reliability
-release: input and container validation, bounded recording capture, exact streaming frame
-counts, PyO3 0.29. Writing and recording-to-file arrived in 0.4.0. Guides for coding agents:
+**Latest release:** [0.5.0](https://github.com/Neksand/sound_rs/releases/tag/v0.5.0) — streaming
+`Decoder`, `write_bytes`, `load_many(on_error="skip")`, `info --json`/`convert` in the CLI,
+AIFF/CAF/ALAC, pathlib paths, and one Symphonia MP3 decoder. Guides for coding agents:
 [llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](https://github.com/Neksand/sound_rs/blob/master/AGENTS.md).
 
 ---
 
 ## 🚀 Features
 
-- **Formats:** WAV (including tested 24-bit PCM), MP3, FLAC, OGG/Vorbis and AAC in M4A/MP4;
-  support depends on the codec and container, not just the file extension
+- **Formats:** WAV (including tested 24-bit PCM), MP3, FLAC, OGG/Vorbis, AAC and ALAC in
+  M4A/MP4, AIFF and CAF; support depends on the codec and container, not just
+  the file extension
 - **Streaming playback:** incremental decoding into a bounded one-second playback ring;
   the full file is not retained in memory, while decoder/filter/process overhead is additional
 - **`Player`:** one output stream stays open — `play_file`, `play_array`, `pause`, `resume`, `seek`,
-  `stop`, `volume`, `position`, `duration`
+  `stop`, `volume`, `position`, `duration`, `paused`
 - **Decode to NumPy:** `load(path, sample_rate=, mono=, offset=, duration=)` — resample to
   16 kHz mono in one call, or decode only a window
-- **Parallel decode:** `load_many(paths, sample_rate=, mono=)` uses every core, GIL released
+- **Streaming decoder:** `Decoder(path, block_frames=, sample_rate=, mono=)` iterates
+  fixed-size float32 blocks with bounded memory and retained resampler state
+- **Parallel decode:** `load_many(paths, sample_rate=, mono=, on_error="skip")` uses every
+  core, releases the GIL and can leave `None` for corrupt files
 - **Recording:** `Recorder()` captures from the microphone; `record_to(path, seconds)`
   saves a take in one call. A bounded callback ring feeds a collector thread; overflow
   and device faults raise an error instead of returning an incomplete successful take
-- **Writing:** `write(path, audio, rate, subtype=)` saves WAV as PCM16, PCM24 or float32
-  with validated header sizes and finite samples; encoding and writing release the GIL
+- **Writing:** `write(path, audio, rate, subtype=)` saves WAV as PCM16, PCM24 or float32;
+  `write_bytes` returns the same WAV without touching disk. Encoding releases the GIL
 - **Queues and live input:** `Player.enqueue(path)` chains tracks; `begin_feed/feed` push
   samples from Python with backpressure. Queueing requires a file source; feed timeouts
   measure lack of progress, and `wait()` includes the final audio drain
-- **Gapless metadata:** encoder delay/padding are trimmed where available. MP3 decoder paths
-  retain a known alignment difference; AAC can retain less than one codec frame of tail padding
+- **Gapless metadata:** encoder delay/padding are trimmed where available. All MP3 paths
+  use Symphonia; AAC can retain less than one codec frame of tail padding
 - **Metadata:** `get_audio_info` uses the container header when complete; missing information
   can require packet or full-file decoding
 - **Resampling:** rubato's FFT resampler with a proper anti-aliasing filter
@@ -54,8 +58,9 @@ counts, PyO3 0.29. Writing and recording-to-file arrived in 0.4.0. Guides for co
   (`io`, `format`, `device`, `stalled`, `unsupported`, `usage`)
 - **Tested behavior:** malformed-input mutation tests, quantized fixture hashes and MP3
   length/level checks, ring-starvation reporting. The full list is on the docs site.
-- **No external decoder:** MP3, FLAC, OGG, AAC and WAV decoders are inside the wheel.
-  Linux wheels still need the ALSA runtime; NumPy is required for array APIs
+- **No external decoder:** MP3, FLAC, OGG, AAC, ALAC, AIFF, CAF and WAV decoders are inside the wheel.
+  Linux wheels bundle the ALSA runtime; source builds need ALSA development headers. NumPy is
+  required for array APIs
 - **Typed:** ships `sound_rs.pyi` and `py.typed`, so editors autocomplete everything
 
 ---
@@ -84,6 +89,8 @@ without opening Python:
 soundrs --help       # commands and the documentation link
 soundrs devices      # output devices, default marked with *
 soundrs info a.flac  # rate, channels, duration; decodes if the header is incomplete
+soundrs info a.flac --json
+soundrs convert a.mp3 a.wav --subtype pcm24
 soundrs play a.flac --volume 0.5
 soundrs docs         # prints https://neksand.github.io/sound_rs/
 ```
@@ -91,6 +98,9 @@ soundrs docs         # prints https://neksand.github.io/sound_rs/
 Exit codes: `0` success, `1` runtime failure, `2` bad usage.
 
 ## 💻 Usage
+
+File-path arguments accept `str` or `os.PathLike` (`pathlib.Path`) throughout, including
+`Player.play_file`, `Player.enqueue` and `Recorder.record_to`.
 
 ### One-shot playback
 
@@ -138,6 +148,7 @@ import sound_rs
 
 audio, rate = sound_rs.load("take.flac")          # (frames, channels)
 sound_rs.write("take.wav", audio, rate, subtype="pcm24")
+raw = sound_rs.write_bytes(audio, rate)            # complete WAV as bytes
 
 with sound_rs.Recorder() as recorder:
     recorder.record_to("take.wav", 5.0)           # record and save
@@ -172,6 +183,11 @@ audio, rate = sound_rs.load("music.flac")                               # (frame
 audio, rate = sound_rs.load("music.flac", sample_rate=16000, mono=True) # dataset shape
 
 pairs = sound_rs.load_many(["a.flac", "b.flac", "c.flac"])              # parallel
+pairs = sound_rs.load_many(paths, on_error="skip")                      # None for corrupt files
+
+with sound_rs.Decoder("long.flac", block_frames=4800, sample_rate=16000, mono=True) as d:
+    for block in d:
+        process(block)          # bounded memory, (frames, 1) float32
 ```
 
 ### From a NumPy array
@@ -190,13 +206,16 @@ sound_rs.play_sine_wave(440.0, 1.0, 44100)
 
 ## 🧩 Benchmark
 
+**Latest local run:** 2026-11-12 on Apple M5 Pro, Python 3.14, against soundfile,
+sounddevice, miniaudio, librosa and pydub — [full report](https://github.com/Neksand/sound_rs/blob/master/bench/REPORT-2026-11-12.md).
+
 Every measurement runs in its own process: peak RSS is process-wide, so timing
 and memory cannot share one. Median and p95 over repeated runs, competitors run
 side by side on the same files.
 
 ```bash
 python bench/run.py                 # sound_rs only
-python bench/run.py --compare       # + soundfile / sounddevice
+python bench/run.py --compare       # + soundfile / sounddevice / miniaudio / librosa / pydub when installed
 python bench/run.py --reps 9
 ```
 
@@ -229,9 +248,9 @@ Detailed original timings and validation are retained in the linked historical r
 
 What the numbers do not hide:
 
-- **MP3 output is offset by 47 samples (~1 ms) versus libsndfile and ffmpeg.**
-  Sample values agree to 1.6e-05 once aligned; the offset comes from how the
-  decoder delay is trimmed, and the length matches exactly.
+- **MP3 alignment:** the 0.3.0 table above used minimp3 and had a 47-sample
+  offset. The current Symphonia path aligns with ffmpeg at lag 0 on the committed
+  fixture; the historical timings remain unchanged.
 - **WAV decode is a memcpy race** with libsndfile; the gap there is small by
   nature, the real wins are FLAC, metadata, memory and latency.
 - **AAC decoding is slower than everything else** — it is a newer, less tuned
@@ -243,7 +262,7 @@ What the numbers do not hide:
 
 | Step | Feature | Description |
 |------|---------|-------------|
-| ✅ 1 | Playback + formats | WAV, MP3, FLAC, OGG, M4A, 24-bit |
+| ✅ 1 | Playback + formats | WAV, MP3, FLAC, OGG, M4A/AAC/ALAC, AIFF, CAF, 24-bit |
 | ✅ 2 | NumPy integration | 1D/2D arrays, `load`, `load_many` |
 | ✅ 3 | `Player` | Persistent stream: pause, seek, volume, position |
 | ✅ 4 | Streaming decode | Bounded playback ring, incremental file decoding |
@@ -254,7 +273,7 @@ What the numbers do not hide:
 | ✅ 9 | Writing files | `write`, `Recorder.record_to`, PCM16/PCM24/float32 WAV |
 | Under investigation | Hot-swap on disconnect | Requires device-backed recovery and cancellation tests on each OS |
 | Planned | Editing and level analysis | Frame-first slice/join/gain/fade/normalize/RMS/peak with numerical semantics |
-| Planned | Continuous fed resampling | Retain filter state across blocks; validate long-run frame counts |
+| ✅ 10 | Continuous fed resampling | Filter state retained across feed blocks; `end_feed` flushes the tail with exact frame counts |
 | Planned | Incremental disk recording | Bounded memory and correct WAV finalization on errors/cancel |
 | Under investigation | FFT/STFT, filters and synthesis | Independent numerical references and documented axes/latency |
 
@@ -289,7 +308,7 @@ python bench/run.py --compare --no-audio  # reproducible device-free subset
 - 🦀 **Rust** — performance and safety
 - 🔗 **PyO3** — Python bridge
 - 🧰 **Maturin** — building and publishing
-- 🔊 **cpal**, **symphonia**, **minimp3**, **rubato** — output, decoding, resampling
+- 🔊 **cpal**, **symphonia**, **rubato** — output, decoding, resampling
 
 ---
 

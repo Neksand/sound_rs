@@ -6,6 +6,7 @@
 
 mod audio;
 mod cli;
+mod decoder;
 mod player;
 mod recorder;
 mod writer;
@@ -13,6 +14,8 @@ mod writer;
 use player::Player;
 use pyo3::create_exception;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
+use std::path::{Path, PathBuf};
 
 create_exception!(sound_rs, SoundRsError, pyo3::exceptions::PyRuntimeError);
 
@@ -29,15 +32,45 @@ pub(crate) fn error_with(code: &str, message: String) -> PyErr {
     err
 }
 
-/// Audio failures are either a file we could not open (`io`) or a container we
-/// could not understand (`format`).
+/// Audio failures are either a file we could not open (`io`), a container we
+/// could not understand (`format`), or a conversion the build cannot perform
+/// (`unsupported`).
 pub(crate) fn error(message: String) -> PyErr {
     let code = if message.starts_with("Cannot open") {
         "io"
+    } else if message.starts_with("Cannot create resampler")
+        || message.starts_with("Cannot resample")
+    {
+        "unsupported"
     } else {
         "format"
     };
     error_with(code, message)
+}
+
+/// Converts a Python path (`str` or `os.PathLike`) into the UTF-8 string the
+/// decoder and writer use internally. Non-UTF-8 paths are refused rather than
+/// silently lossy-converted.
+pub(crate) fn path_string(path: PathBuf) -> PyResult<String> {
+    path.into_os_string()
+        .into_string()
+        .map_err(|_| error_with("usage", "Path must be valid UTF-8".to_string()))
+}
+
+/// Validates the destination before any capture or encoding work starts.
+pub(crate) fn wav_subtype(path: &str, subtype: &str) -> PyResult<writer::Subtype> {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if extension != "wav" {
+        return Err(error_with(
+            "usage",
+            format!("Only .wav can be written so far (got '.{extension}')"),
+        ));
+    }
+    writer::Subtype::parse(Some(subtype)).map_err(|message| error_with("usage", message))
 }
 
 #[cfg(feature = "numpy")]
@@ -103,19 +136,7 @@ pub(crate) fn write_array(
     sample_rate: u32,
     subtype: &str,
 ) -> PyResult<()> {
-    let extension = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if extension != "wav" {
-        return Err(error_with(
-            "usage",
-            format!("Only .wav can be written so far (got '.{extension}')"),
-        ));
-    }
-    let format =
-        writer::Subtype::parse(Some(subtype)).map_err(|message| error_with("usage", message))?;
+    let format = wav_subtype(path, subtype)?;
     let (samples, channels) = numpy_frames(audio)?;
     audio
         .py()
@@ -128,12 +149,39 @@ pub(crate) fn write_array(
 #[pyfunction]
 #[pyo3(signature = (file_path, audio, sample_rate, subtype="pcm16"))]
 fn write(
-    file_path: &str,
+    file_path: PathBuf,
     audio: Bound<'_, PyAny>,
     sample_rate: u32,
     subtype: &str,
 ) -> PyResult<()> {
-    write_array(file_path, &audio, sample_rate, subtype)
+    let file_path = path_string(file_path)?;
+    write_array(&file_path, &audio, sample_rate, subtype)
+}
+
+/// Encode audio to the bytes of a WAV file. Same layout and subtypes as `write`,
+/// but nothing touches the filesystem.
+#[pyfunction]
+#[pyo3(signature = (audio, sample_rate, subtype="pcm16"))]
+fn write_bytes<'py>(
+    py: Python<'py>,
+    audio: Bound<'_, PyAny>,
+    sample_rate: u32,
+    subtype: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let format =
+        writer::Subtype::parse(Some(subtype)).map_err(|message| error_with("usage", message))?;
+    let (samples, channels) = numpy_frames(&audio)?;
+    let bytes = py
+        .detach(|| writer::wav_bytes(&samples, channels, sample_rate, format))
+        .map_err(|message| {
+            let code = if message.starts_with("Cannot allocate") {
+                "unsupported"
+            } else {
+                "usage"
+            };
+            error_with(code, message)
+        })?;
+    Ok(PyBytes::new(py, &bytes))
 }
 
 /// Extracts interleaved f32 samples from a 1D mono or 2D `(channels, frames)`
@@ -189,16 +237,18 @@ pub(crate) fn numpy_samples(array: &Bound<'_, PyAny>) -> PyResult<(Vec<f32>, u16
 /// Blocks until playback finishes and releases the GIL while it does.
 #[pyfunction]
 #[pyo3(signature = (file_path, device=None))]
-fn play_audio(py: Python<'_>, file_path: &str, device: Option<String>) -> PyResult<()> {
+fn play_audio(py: Python<'_>, file_path: PathBuf, device: Option<String>) -> PyResult<()> {
+    let file_path = path_string(file_path)?;
     let mut player = Player::new(device)?;
-    player.play_file(py, file_path)?;
+    player.play_file(py, file_path.into())?;
     player.wait(py)
 }
 
 /// Check if the file can be decoded, without decoding it.
 #[pyfunction]
-fn is_supported_format(py: Python<'_>, file_path: &str) -> bool {
-    py.detach(|| audio::open(file_path).is_ok())
+fn is_supported_format(py: Python<'_>, file_path: PathBuf) -> PyResult<bool> {
+    let file_path = path_string(file_path)?;
+    Ok(py.detach(|| audio::open(&file_path).is_ok()))
 }
 
 /// Get `(sample_rate, channels, duration_seconds)` from the container header.
@@ -206,8 +256,9 @@ fn is_supported_format(py: Python<'_>, file_path: &str) -> bool {
 /// Only decodes when the header does not carry a frame count (some VBR MP3s),
 /// or one packet for AAC, whose container has no channel layout.
 #[pyfunction]
-fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> {
-    py.detach(|| audio::info_or_decode(file_path))
+fn get_audio_info(py: Python<'_>, file_path: PathBuf) -> PyResult<(u32, u16, f32)> {
+    let file_path = path_string(file_path)?;
+    py.detach(|| audio::info_or_decode(&file_path))
         .map_err(error)
 }
 
@@ -219,7 +270,7 @@ fn get_audio_info(py: Python<'_>, file_path: &str) -> PyResult<(u32, u16, f32)> 
 #[pyo3(signature = (file_path, sample_rate=None, mono=false, offset=0.0, duration=None))]
 fn load<'py>(
     py: Python<'py>,
-    file_path: &str,
+    file_path: PathBuf,
     sample_rate: Option<u32>,
     mono: bool,
     offset: f64,
@@ -237,6 +288,7 @@ fn load<'py>(
             "offset and duration must be finite and non-negative".to_string(),
         ));
     }
+    let file_path = path_string(file_path)?;
     let options = audio::LoadOptions {
         sample_rate,
         mono,
@@ -244,7 +296,7 @@ fn load<'py>(
         duration,
     };
     let audio = py
-        .detach(|| audio::decode_with_options(file_path, options))
+        .detach(|| audio::decode_with_options(&file_path, options))
         .map_err(error)?;
     into_array(py, audio)
 }
@@ -274,8 +326,7 @@ pub(crate) fn into_array(py: Python<'_>, audio: audio::Audio) -> PyResult<(Bound
 }
 
 /// Decode audio bytes already in memory. Returns the same shape and rate as
-/// `load`. MP4 priming is read from the bytes; MP3 uses Symphonia here rather
-/// than the minimp3 file decoder, so the two MP3 paths can differ in samples.
+/// `load`. MP4 priming is read from the bytes; all MP3 paths use Symphonia.
 #[pyfunction]
 #[pyo3(signature = (data))]
 fn load_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<(Bound<'py, PyAny>, u32)> {
@@ -283,25 +334,44 @@ fn load_bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<(Bound<'py, PyAny>,
     into_array(py, audio)
 }
 
+/// One decoded file in a batch: `None` when `on_error="skip"` swallowed a failure.
+type DecodedFile<'py> = Option<(Bound<'py, PyAny>, u32)>;
+
 /// Decode many files in parallel. Returns `[(array, sample_rate), ...]` in the
-/// same order as `paths`. Failures raise for the first file that failed.
+/// same order as `paths`. `on_error="raise"` raises for the first failure in
+/// input order; `on_error="skip"` returns `None` for files that fail to decode.
 #[pyfunction]
-#[pyo3(signature = (paths, threads=None, sample_rate=None, mono=false))]
+#[pyo3(signature = (paths, threads=None, sample_rate=None, mono=false, on_error="raise"))]
 fn load_many<'py>(
     py: Python<'py>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     threads: Option<usize>,
     sample_rate: Option<u32>,
     mono: bool,
-) -> PyResult<Vec<(Bound<'py, PyAny>, u32)>> {
+    on_error: &str,
+) -> PyResult<Vec<DecodedFile<'py>>> {
     use rayon::prelude::*;
 
+    let skip_errors = match on_error {
+        "raise" => false,
+        "skip" => true,
+        other => {
+            return Err(error_with(
+                "usage",
+                format!("Unknown on_error '{other}'. Use raise or skip"),
+            ))
+        }
+    };
     if sample_rate == Some(0) {
         return Err(error_with(
             "usage",
             "sample_rate must be positive".to_string(),
         ));
     }
+    let paths = paths
+        .into_iter()
+        .map(path_string)
+        .collect::<PyResult<Vec<_>>>()?;
 
     let options = audio::LoadOptions {
         sample_rate,
@@ -329,9 +399,10 @@ fn load_many<'py>(
 
     decoded
         .into_iter()
-        .map(|result| {
-            let audio = result.map_err(error)?;
-            into_array(py, audio)
+        .map(|result| match result {
+            Ok(audio) => Ok(Some(into_array(py, audio)?)),
+            Err(_) if skip_errors => Ok(None),
+            Err(message) => Err(error(message)),
         })
         .collect()
 }
@@ -423,6 +494,7 @@ fn list_input_devices() -> PyResult<Vec<(usize, String, bool)>> {
 #[pymodule(gil_used = true)]
 fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Player>()?;
+    m.add_class::<decoder::Decoder>()?;
     m.add_class::<recorder::Recorder>()?;
     m.add("SoundRsError", _py.get_type::<SoundRsError>())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
@@ -432,6 +504,7 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load, &m)?)?;
     m.add_function(wrap_pyfunction!(load_bytes, &m)?)?;
     m.add_function(wrap_pyfunction!(write, &m)?)?;
+    m.add_function(wrap_pyfunction!(write_bytes, &m)?)?;
     m.add_function(wrap_pyfunction!(load_many, &m)?)?;
     m.add_function(wrap_pyfunction!(play_array, &m)?)?;
     m.add_function(wrap_pyfunction!(play_sine_wave, &m)?)?;

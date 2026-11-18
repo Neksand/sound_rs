@@ -74,13 +74,15 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
 
 - Create, use and destroy the recorder on its original thread.
 
+- `record(seconds)` accepts a finite value in 0…3600 seconds. Anything outside raises `SoundRsError(code="usage")` instead of clamping; use `start()`/`stop()` for longer takes.
+
 - Capture starts when the device delivers its first buffer. Startup latency can make a timed take shorter than requested; the recorder does not add frames to hide it.
 
 - The callback writes to a bounded input ring (normally one second, at most 4 MiB). A collector thread stores the take outside the audio callback. The recording limit remains 230 M float32 samples (920 MB of payload, roughly 40 minutes at 48 kHz stereo). This is not a cap on total process memory or a hard real-time guarantee.
 
 - Input overflow invalidates the take with `code="stalled"`, the storage limit or allocation failure uses `unsupported`, and a backend failure uses `device`. The library does not return a successful partial take after these faults. `stop()` drains the final callback and joins the collector with the GIL released.
 
-- `record_to()` records to memory before writing the WAV; it is not an incremental disk recorder.
+- `record_to()` records to memory before writing the WAV; it is not an incremental disk recorder. It validates the destination path and subtype before capture starts, so a bad argument does not cost a failed take.
 
 - No resampling, mixing or effects on input — capture is raw device audio.
 

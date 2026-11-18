@@ -1,5 +1,8 @@
 # sound_rs benchmark
 
+> Historical report. Current 2026-11-12 comparison:
+> [REPORT-2026-11-12.md](REPORT-2026-11-12.md).
+
 arm, Darwin 25.6.0, Python 3.14.7, reps=7, 2026-11-05T15:53:33
 
 ## batch

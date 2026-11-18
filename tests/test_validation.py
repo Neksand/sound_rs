@@ -23,6 +23,23 @@ class ValidationTests(unittest.TestCase):
             function(*args, **kwargs)
         self.assertEqual(raised.exception.code, code)
 
+    def test_pathlike_inputs(self):
+        self.assertTrue(sound_rs.is_supported_format(self.fixture))
+        rate, channels, duration = sound_rs.get_audio_info(self.fixture)
+        self.assertEqual((rate, channels), (44100, 2))
+        self.assertGreater(duration, 0.0)
+
+        data, rate = sound_rs.load(self.fixture)
+        self.assertEqual(rate, 44100)
+        pairs = sound_rs.load_many([self.fixture])
+        self.assertEqual(pairs[0][1], rate)
+        np.testing.assert_array_equal(pairs[0][0], data)
+
+        sound_rs.write(self.output, data, rate, subtype="float32")
+        written, written_rate = sound_rs.load(self.output)
+        self.assertEqual(written_rate, rate)
+        np.testing.assert_array_equal(written, data)
+
     def test_invalid_write_preserves_existing_file(self):
         sentinel = b"existing file must survive rejected input"
         cases = [
@@ -43,6 +60,38 @@ class ValidationTests(unittest.TestCase):
     def test_write_io_error(self):
         path = self.output.parent / "missing" / "output.wav"
         self.assert_code("io", sound_rs.write, str(path), np.zeros(1, dtype=np.float32), 44100)
+
+    def test_write_bytes_roundtrip(self):
+        data, rate = sound_rs.load(self.fixture)
+        raw = sound_rs.write_bytes(data, rate, subtype="float32")
+        self.assertIsInstance(raw, bytes)
+        decoded, decoded_rate = sound_rs.load_bytes(raw)
+        self.assertEqual(decoded_rate, rate)
+        np.testing.assert_array_equal(decoded, data)
+
+    def test_write_bytes_float32_is_sample_exact(self):
+        samples = np.array([0.1, -0.1, 0.0, 1.0, -1.0, 0.333333], dtype=np.float32)
+        raw = sound_rs.write_bytes(samples, 8000, "float32")
+        decoded, rate = sound_rs.load_bytes(raw)
+        self.assertEqual(rate, 8000)
+        np.testing.assert_array_equal(decoded, samples.reshape(-1, 1))
+
+    def test_write_bytes_rejects_invalid_input(self):
+        self.assert_code(
+            "usage", sound_rs.write_bytes, np.zeros(1, dtype=np.float32), 44100, "mp3"
+        )
+        for samples, rate in [
+            (np.zeros(1, dtype=np.float32), 0),
+            (np.array([np.nan], dtype=np.float32), 44100),
+            (np.array([np.inf], dtype=np.float32), 44100),
+            (np.array([-np.inf], dtype=np.float32), 44100),
+        ]:
+            with self.subTest(rate=rate, samples=samples[:1]):
+                self.assert_code("usage", sound_rs.write_bytes, samples, rate)
+
+    def test_write_bytes_dtype_remains_strict(self):
+        with self.assertRaises(TypeError):
+            sound_rs.write_bytes(np.zeros(2, dtype=np.float64), 44100)
 
     def test_pcm24_padding_is_in_riff_size(self):
         sound_rs.write(str(self.output), np.array([0.5], dtype=np.float32), 44100, "pcm24")
@@ -106,6 +155,22 @@ class ValidationTests(unittest.TestCase):
         data, rate = sound_rs.load(str(self.fixture), duration=0)
         self.assertEqual((data.shape, rate), ((0, 2), 44100))
         self.assertEqual(sound_rs.load_many([]), [])
+
+    def test_load_many_skip_errors(self):
+        missing = self.output.parent / "missing.wav"
+        pairs = sound_rs.load_many([str(missing), str(self.fixture)], on_error="skip")
+        data, rate = sound_rs.load(self.fixture)
+        self.assertEqual(len(pairs), 2)
+        self.assertIsNone(pairs[0])
+        self.assertEqual(pairs[1][1], rate)
+        np.testing.assert_array_equal(pairs[1][0], data)
+
+    def test_load_many_default_raises(self):
+        missing = self.output.parent / "missing.wav"
+        self.assert_code("io", sound_rs.load_many, [str(self.fixture), str(missing)])
+
+    def test_load_many_rejects_invalid_on_error_before_decoding(self):
+        self.assert_code("usage", sound_rs.load_many, ["missing.wav"], on_error="ignore")
 
     def test_invalid_synthesis_does_not_open_a_device(self):
         for frequency, duration, rate in [

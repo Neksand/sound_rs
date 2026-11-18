@@ -31,7 +31,7 @@ The contract is to report malformed input without a panic crossing the Python bo
 
 ## Determinism
 
-`tests/decode_regression.py` checks exact dimensions/rates for six fixtures, SHA-256 hashes of samples rounded to 10⁻⁴ for five, and an RMS tolerance for MP3. Missing fixtures fail the check. These are regression bounds, not a guarantee that every sample change is detected or that decoder output is bit-identical across CPUs and dependency versions.
+`tests/decode_regression.py` checks exact dimensions/rates for nine fixtures and SHA-256 hashes of samples rounded to 10⁻⁴ for all of them. Missing fixtures fail. fixtures fail the check. These are regression bounds, not a guarantee that every sample change is detected or that decoder output is bit-identical across CPUs and dependency versions.
 
 ## Memory
 
@@ -47,9 +47,9 @@ The contract is to report malformed input without a panic crossing the Python bo
 
 - Resampling uses rubato's FFT resampler: a 20 kHz tone downsampled to 24 kHz is filtered below 10% of its level instead of folding back as an alias.
 
-- Encoder-delay/padding metadata is used when available; MP3 decoder paths differ and AAC can retain tail padding. See [format limits](formats.html#gapless).
+- Encoder-delay/padding metadata is used when available; all MP3 paths use one Symphonia decoder, and AAC can retain tail padding. See [format limits](formats.html#gapless).
 
-- Historical test-corpus comparisons found identical WAV/FLAC PCM, MP3 agreement within 1.6·10⁻⁵ after a 47-sample alignment adjustment, and AAC agreement within 8·10⁻⁸. These are fixture results, not universal codec guarantees.
+- The committed MP3 fixture aligns with ffmpeg at lag 0; the historical minimp3 run had a 47-sample offset. WAV/FLAC PCM is identical, and AAC agrees within 8·10⁻⁸ on the fixture. These are fixture results, not universal codec guarantees.
 
 ## What is not promised
 

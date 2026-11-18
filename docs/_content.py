@@ -11,8 +11,9 @@ page(
 <p class="kicker">Python · Rust · macOS / Windows / Linux</p>
 <h1>Audio for Python, without ffmpeg.</h1>
 <p class="lead">sound_rs plays and decodes the formats people actually have — MP3, FLAC, WAV,
-OGG, M4A — from a single wheel. The decoders are compiled in; no ffmpeg binary is required.
-Linux needs the ALSA runtime, and array APIs need NumPy.</p>
+OGG, M4A/AAC/ALAC, AIFF and CAF — from a single wheel. The decoders are compiled in; no ffmpeg
+binary is required.
+Linux wheels bundle the ALSA runtime, and array APIs need NumPy.</p>
 
 <div class="figures">
   <div><span>First sound</span><b>11 ms</b><i>on a 10-minute file</i></div>
@@ -69,7 +70,7 @@ alternatives.</p>
 page(
     "install.html",
     "Installation",
-    "How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the Linux audio library it needs.",
+    "How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the bundled Linux audio runtime.",
     """
 <p class="kicker">01 · Start</p>
 <h1>Installation</h1>
@@ -108,16 +109,19 @@ pip install maturin
 maturin develop --release
 """, "bash") + """
 <h2 id="linux-audio">Linux audio</h2>
-<p>Playback uses ALSA through <code>cpal</code>. Most desktops already have the runtime
-library; a minimal container or server needs it explicitly:</p>
+<p>Playback uses ALSA through <code>cpal</code>. The Linux wheels bundle the ALSA runtime
+library, so <code>import sound_rs</code>, decoding, metadata and <code>soundrs info</code>
+work in a slim container without installing system packages. Playback still needs an output
+device; with none, it raises <code>SoundRsError(code="device")</code>.</p>
+<p>Source builds need the ALSA development headers:</p>
 """ + code("""
-sudo apt install libasound2          # Debian / Ubuntu (libasound2t64 on 24.04+)
-sudo dnf install alsa-lib            # Fedora
+sudo apt install libasound2-dev      # Debian / Ubuntu
+sudo dnf install alsa-lib-devel      # Fedora
 """, "bash") + note(
-        "The wheel links the ALSA runtime",
-        "If the library is missing, <code>import sound_rs</code> fails at load time, not on the "
-        "first play. Install the package above. There is currently no supported playback-disabled "
-        "build feature; no external audio decoder is required.",
+        "Alpine and musl",
+        "musllinux wheels are not published yet. Alpine falls back to the source distribution, "
+        "which needs Rust plus <code>alsa-lib-dev</code>. The wheel does not require a separate "
+        "ALSA runtime install.",
     ) + """
 <h2 id="check">Check it works</h2>
 """ + code("""
@@ -325,8 +329,10 @@ for five seconds — a paused player, for example — it raises
 <code>SoundRsError</code> with <code>code="stalled"</code> instead of hanging.</p>
 <p>The timeout measures consecutive time without ring progress, not the duration of a
 <code>feed()</code> call. Long healthy feeds are supported. Closing an empty feed completes
-cleanly; <code>wait()</code> includes the final output drain. <code>end_feed()</code> requires
-a fed source; after a finished feed, call <code>begin_feed()</code> to start another.</p>
+cleanly; <code>wait()</code> includes the final output drain. <code>end_feed()</code> also waits
+for ring space while it flushes the resampler tail, so resume a paused player first.
+<code>end_feed()</code> requires a fed source; after a finished feed, call
+<code>begin_feed()</code> to start another.</p>
 """ + code("""
 import numpy as np
 import sound_rs
@@ -339,9 +345,9 @@ for _ in range(100):
 player.end_feed()
 player.wait()
 """) + note(
-        "Feed at the device rate for clean joins",
-        "Chunks are converted and resampled independently, so a non-device rate can click at "
-        "chunk boundaries. Query <code>player.sample_rate</code> and feed that.",
+        "Feed at the device rate to avoid conversion",
+        "Non-device rates are resampled with retained filter state across blocks. Query "
+        "<code>player.sample_rate</code> for the device rate.",
     ) + """
 <h2 id="threading">Threading and the GIL</h2>
 <p>File decoding runs on a Rust worker. Playback waits and feed backpressure release the GIL,
@@ -385,8 +391,9 @@ container, decoder, resampler and process memory are additional.</p>
 <p>When the sample rate changes, the resampler removes its filter delay and drains the
 filter tail at EOF. The output contains exactly <code>ceil(input_frames * output_rate /
 input_rate)</code> frames, including tracks shorter than a processing block. Seeking resets
-the filter and frame counters. This does not make independently resampled
-<code>feed()</code> blocks continuous; use the device rate for those blocks.</p>
+the filter and frame counters. The same streaming resampler retains state across
+<code>feed()</code> blocks, and <code>end_feed()</code> flushes the tail, so a non-device feed
+rate stays continuous.</p>
 <ol>
   <li>The decoder thread reads a packet, decodes it to float32, converts the channel count
       and resamples to the device rate.</li>
@@ -447,21 +454,24 @@ clips = sound_rs.load_many(["a.flac", "b.flac"])
 page(
     "formats.html",
     "Formats and gapless",
-    "Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.",
+    "Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and how MP3 alignment now compares with libsndfile.",
     """
 <p class="kicker">06 · Guides</p>
 <h1>Formats and gapless</h1>
-<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis and AAC-in-MP4 decoding, with
-encoder-delay trimming where metadata is available.</p>
+<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, ALAC, AIFF and CAF
+decoding, with encoder-delay trimming where metadata is available.</p>
 
 <h2 id="supported">Supported formats</h2>
 <table>
   <tr><th>Format</th><th>Extensions</th><th>Decoder</th><th>Notes</th></tr>
   <tr><td>WAV</td><td class="num">.wav</td><td>symphonia</td><td>PCM, including tested 24-bit and multichannel files</td></tr>
   <tr><td>FLAC</td><td class="num">.flac</td><td>symphonia</td><td>Lossless decode; supported codec layouts/rates</td></tr>
-  <tr><td>MP3</td><td class="num">.mp3</td><td>minimp3 / symphonia</td><td>Full-file load uses minimp3; bytes/windows/streaming use Symphonia</td></tr>
+  <tr><td>MP3</td><td class="num">.mp3</td><td>symphonia</td><td>One decoder path for full-file, bytes, windows and streaming</td></tr>
   <tr><td>OGG Vorbis</td><td class="num">.ogg</td><td>symphonia</td><td>—</td></tr>
   <tr><td>AAC in MP4</td><td class="num">.m4a, .mp4</td><td>symphonia</td><td>priming read from the edit list</td></tr>
+  <tr><td>ALAC in M4A</td><td class="num">.m4a, .mp4</td><td>symphonia</td><td>Lossless; gapless where the container declares it</td></tr>
+  <tr><td>AIFF</td><td class="num">.aiff</td><td>symphonia</td><td>PCM</td></tr>
+  <tr><td>CAF</td><td class="num">.caf</td><td>symphonia</td><td>PCM</td></tr>
 </table>
 <p>There is no extension allowlist. Probing recognizes containers; a successful probe does
 not prove that every codec or packet inside is supported. Raw AAC and other containers need
@@ -486,12 +496,11 @@ import sound_rs, soundfile
 ours, _ = sound_rs.load("track.flac")
 theirs, _ = soundfile.read("track.flac", dtype="float32")
 print(ours.shape == theirs.shape, abs(ours - theirs).max())   # (True, 0.0)
-""") + warn(
-        "MP3 is offset by 47 samples",
-        "The tested full-file MP3 path starts 47 samples (~1 ms) earlier than libsndfile and "
-        "ffmpeg. The measured fixture lengths match and samples agree to 1.6·10⁻⁵ once "
-        "aligned. Bytes, windowed and streamed MP3 use a different decoder; do not assume "
-        "sample identity or alignment across these paths.",
+""") + note(
+        "One MP3 decoder",
+        "Full-file, bytes, windowed and streamed MP3 all use Symphonia. On the tested fixture "
+        "the decoded PCM aligns with ffmpeg at lag 0; the old 47-sample offset from the "
+        "minimp3 path is gone.",
     ) + """
 <h2 id="depth">Bit depth</h2>
 <p>Everything is converted to float32 on decode. 24-bit files keep their resolution; there is
@@ -686,7 +695,7 @@ wait releases the GIL; device setup and teardown still depend on the backend.</p
 <h2 id="tradeoffs">What you gain, what you give up</h2>
 <table>
   <tr><th></th><th>sound_rs</th><th>soundfile + sounddevice</th><th>pydub</th></tr>
-  <tr><td>Formats</td><td>WAV, FLAC, MP3, OGG, M4A</td><td>WAV, FLAC, MP3; no AAC</td><td>anything ffmpeg reads</td></tr>
+  <tr><td>Formats</td><td>WAV, FLAC, MP3, OGG, M4A, ALAC, AIFF, CAF</td><td>WAV, FLAC, MP3; no AAC</td><td>anything ffmpeg reads</td></tr>
   <tr><td>External tools</td><td>none</td><td>none</td><td>ffmpeg binary</td></tr>
   <tr><td>Playback without loading</td><td>yes</td><td>no</td><td>no</td></tr>
   <tr><td>Editing (cut, mix, convert)</td><td>no</td><td>no</td><td>yes</td></tr>
@@ -704,7 +713,9 @@ page(
 <h1>API reference</h1>
 <p class="lead">Functions for files and arrays, plus persistent <code>Player</code> and
 <code>Recorder</code> classes. Library failures use <code>sound_rs.SoundRsError</code>;
-Python argument conversion can raise <code>TypeError</code> or <code>OverflowError</code>.</p>
+Python argument conversion can raise <code>TypeError</code> or <code>OverflowError</code>.
+Every file-path argument accepts <code>str</code> or <code>os.PathLike[str]</code>, such as
+<code>pathlib.Path</code>; non-UTF-8 path bytes raise <code>SoundRsError(code="usage")</code>.</p>
 
 <h2 id="module">Module</h2>
 <p><code class="num">sound_rs.__version__</code> — the installed version as a string, for example
@@ -714,7 +725,7 @@ Python argument conversion can raise <code>TypeError</code> or <code>OverflowErr
 
 <h2 id="play-audio">play_audio</h2>
 """ + code("""
-sound_rs.play_audio(file_path: str, device: str | None = None) -> None
+sound_rs.play_audio(file_path: str | os.PathLike[str], device: str | None = None) -> None
 """) + """
 <p>Plays a file and blocks until it ends, releasing the GIL while waiting for playback.
 Opens the output device for this call; startup cost depends on the backend and device.
@@ -734,7 +745,7 @@ sound_rs.play_audio("music.flac", device="MacBook Pro Speakers")
 """) + """
 <h2 id="is-supported-format">is_supported_format</h2>
 """ + code("""
-sound_rs.is_supported_format(file_path: str) -> bool
+sound_rs.is_supported_format(file_path: str | os.PathLike[str]) -> bool
 """) + """
 <p>Probes the container header. Does not decode or verify codec support and packet integrity.
 A missing or unrecognized file returns <code>False</code>. Probe time depends on the container
@@ -742,7 +753,7 @@ and storage.</p>
 
 <h2 id="get-audio-info">get_audio_info</h2>
 """ + code("""
-sound_rs.get_audio_info(file_path: str) -> tuple[int, int, float]
+sound_rs.get_audio_info(file_path: str | os.PathLike[str]) -> tuple[int, int, float]
 """) + """
 <p>Returns <code>(sample_rate, channels, duration_seconds)</code>. Uses the header when complete;
 missing rate or channel information can require decoding a packet.</p>
@@ -751,7 +762,7 @@ duration is a number; this function does not return <code>None</code>.</p>
 
 <h2 id="load">load</h2>
 """ + code("""
-sound_rs.load(file_path: str, sample_rate: int | None = None,
+sound_rs.load(file_path: str | os.PathLike[str], sample_rate: int | None = None,
               mono: bool = False, offset: float = 0.0,
               duration: float | None = None) -> tuple[numpy.ndarray, int]
 """) + """
@@ -769,17 +780,21 @@ positive; invalid options raise <code>SoundRsError(code="usage")</code> before f
 
 <h2 id="load-many">load_many</h2>
 """ + code("""
-sound_rs.load_many(paths: Sequence[str], threads: int | None = None,
-                   sample_rate: int | None = None, mono: bool = False)
-    -> list[tuple[numpy.ndarray, int]]
+sound_rs.load_many(paths: Sequence[str | os.PathLike[str]], threads: int | None = None,
+                   sample_rate: int | None = None, mono: bool = False,
+                   on_error: str = "raise")
+    -> list[tuple[numpy.ndarray, int] | None]
 """) + """
 <p>Decodes in parallel with a Rayon pool, releasing the GIL. Order matches <code>paths</code>.
-<code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. All files
-are processed, then the first failure in input order is raised. A requested sample rate must
-be positive, including for an empty batch. Optional rate and mono conversion apply to every file; the
-whole batch is retained in memory.</p>
+<code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. With
+<code>on_error="raise"</code> the first failure in input order raises; with
+<code>on_error="skip"</code> that slot is <code>None</code> and the rest of the batch still
+decodes. Any other value raises <code>SoundRsError(code="usage")</code> before decoding. A
+requested sample rate must be positive, including for an empty batch. Optional rate and mono
+conversion apply to every file; the whole batch is retained in memory.</p>
 """ + code("""
-clips = sound_rs.load_many(["a.flac", "b.flac"], threads=2)
+clips = sound_rs.load_many(["a.flac", "b.flac"], threads=2, on_error="skip")
+good = [clip for clip in clips if clip is not None]
 """) + """
 <h2 id="play-array">play_array</h2>
 """ + code("""
@@ -812,7 +827,8 @@ returns an exit code. You do not call it from Python — see
 
 <h2 id="write">write</h2>
 """ + code("""
-sound_rs.write(file_path: str, audio, sample_rate: int, subtype: str = "pcm16") -> None
+sound_rs.write(file_path: str | os.PathLike[str], audio, sample_rate: int,
+               subtype: str = "pcm16") -> None
 """) + """
 <p>Writes float32 audio to a WAV file. The array is <code>(frames,)</code> for mono or
 <code>(frames, channels)</code> — the same layout <code>load</code> returns, so
@@ -831,14 +847,26 @@ Read-only and strided float32 arrays are accepted; float64 remains a <code>TypeE
 audio, rate = sound_rs.load("take.flac")
 sound_rs.write("take.wav", audio, rate, subtype="pcm24")
 """) + """
+<h2 id="write-bytes">write_bytes</h2>
+""" + code("""
+sound_rs.write_bytes(audio, sample_rate: int, subtype: str = "pcm16") -> bytes
+""") + """
+<p>Encodes the same <code>(frames,)</code> or <code>(frames, channels)</code> float32 input as
+<a href="#write">write</a> and returns the complete WAV file as <code>bytes</code>. Nothing is
+written to disk. Validation and error codes match <code>write</code>; encoding releases the
+GIL. Useful for HTTP responses, object storage and tests.</p>
+""" + code("""
+raw = sound_rs.write_bytes(audio, rate, subtype="pcm24")
+open("take.wav", "wb").write(raw)
+""") + """
 <h2 id="load-bytes">load_bytes</h2>
 """ + code("""
 sound_rs.load_bytes(data: bytes) -> tuple[numpy.ndarray, int]
 """) + """
 <p>Decodes bytes to a float32 <code>(frames, channels)</code> array and its sample rate.
-AAC-in-MP4 priming is read from the buffer's edit list. MP3 uses Symphonia here, while a
-full-file <code>load</code> uses minimp3; samples and alignment can differ. Malformed data can
-raise <code>SoundRsError(code="format")</code>; an unexpected EOF may yield a decodable prefix.</p>
+AAC-in-MP4 priming is read from the buffer's edit list. MP3 uses the same Symphonia path as a
+full-file <code>load</code>. Malformed data can raise <code>SoundRsError(code="format")</code>;
+an unexpected EOF may yield a decodable prefix.</p>
 
 <h2 id="list-devices">list_devices</h2>
 """ + code("""
@@ -858,7 +886,7 @@ there is no microphone or the OS denies access.</p>
   <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
   <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
   <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
-  <tr><td class="num">record_to(path, seconds, subtype="pcm16")</td><td>None</td><td>Capture in memory, then write a WAV</td></tr>
+  <tr><td class="num">record_to(path, seconds, subtype="pcm16")</td><td>None</td><td>Capture in memory, then write a WAV; path accepts <code>str</code> or <code>os.PathLike</code>, validated with the subtype before capture; also limited to 0…3600 seconds</td></tr>
   <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
 </table>
 
@@ -869,6 +897,31 @@ sound_rs.list_input_devices() -> list[tuple[int, str, bool]]
 <p>Input devices as <code>(index, name, is_default)</code>. The name is what
 <code>Recorder(device=...)</code> accepts.</p>
 
+<h2 id="decoder">Decoder</h2>
+""" + code("""
+sound_rs.Decoder(file_path, block_frames: int = 48000,
+                 sample_rate: int | None = None, mono: bool = False)
+""") + """
+<p>Incremental decoder for files larger than memory. Returns float32
+<code>(frames, channels)</code> blocks, with the same channel/delay handling as
+<code>load</code>. <code>sample_rate</code> resamples with retained filter state and
+<code>mono</code> folds channels. Paths accept <code>str</code> or <code>os.PathLike</code>.</p>
+<table>
+  <tr><th>Member</th><th>Returns</th><th>Notes</th></tr>
+  <tr><td class="num">sample_rate</td><td>int</td><td>Output rate after optional resampling</td></tr>
+  <tr><td class="num">channels</td><td>int</td><td>Output channel count; AAC is primed so this is known before the first read</td></tr>
+  <tr><td class="num">duration</td><td>float | None</td><td>Container duration when available</td></tr>
+  <tr><td class="num">block_frames</td><td>int</td><td>Default block size used by iteration and <code>read()</code></td></tr>
+  <tr><td class="num">read(frames=None)</td><td>ndarray</td><td>Up to <code>frames</code>; empty <code>(0, channels)</code> at EOF</td></tr>
+  <tr><td class="num">close()</td><td>None</td><td>Releases the decoder; later reads raise <code>usage</code></td></tr>
+</table>
+<p>Iteration returns blocks until EOF. The object is a context manager. For AAC-in-MP4,
+the streaming path can trim tail padding that a whole-file <code>load</code> may retain.</p>
+""" + code("""
+with sound_rs.Decoder("long.flac", block_frames=4800, sample_rate=16000, mono=True) as d:
+    for block in d:
+        process(block)          # (4800, 1) float32 until the final partial block
+""") + """
 <h2 id="player">Player</h2>
 """ + code("""
 sound_rs.Player(device: str | None = None)
@@ -880,7 +933,7 @@ stops playback on exit; the device stream closes when the object is destroyed.</
 <h3 id="methods">Methods</h3>
 <table>
   <tr><th>Signature</th><th>Returns</th><th>Notes</th></tr>
-  <tr><td class="num">play_file(path)</td><td>None</td><td>Streams from disk, returns immediately</td></tr>
+  <tr><td class="num">play_file(path)</td><td>None</td><td>Probes the header, then streams from disk and returns before playback finishes; path accepts <code>str</code> or <code>os.PathLike</code></td></tr>
   <tr><td class="num">play_array(array, rate)</td><td>None</td><td>1D or 2D float32</td></tr>
   <tr><td class="num">play_samples(samples, src_channels, sample_rate)</td><td>None</td><td>Interleaved Python sequence, converted to float32; no NumPy required</td></tr>
   <tr><td class="num">pause()</td><td>None</td><td>Position freezes</td></tr>
@@ -888,7 +941,7 @@ stops playback on exit; the device stream closes when the object is destroyed.</
   <tr><td class="num">stop()</td><td>None</td><td>Clears source/queue and resets position; keeps device open</td></tr>
   <tr><td class="num">seek(seconds)</td><td>None</td><td>Finite file/array target, clamped to known duration; preserves pause</td></tr>
   <tr><td class="num">wait()</td><td>None</td><td>Waits for completion/drain or returns while paused/stopped; GIL released</td></tr>
-  <tr><td class="num">enqueue(path)</td><td>None</td><td>Requires active file source; up to 128 waiting entries</td></tr>
+  <tr><td class="num">enqueue(path)</td><td>None</td><td>Requires active file source; up to 128 waiting entries; path accepts <code>str</code> or <code>os.PathLike</code></td></tr>
   <tr><td class="num">clear_queue()</td><td>None</td><td>Drops everything queued</td></tr>
   <tr><td class="num">begin_feed(rate)</td><td>None</td><td>Switches to samples pushed from Python</td></tr>
   <tr><td class="num">feed(array)</td><td>None</td><td>Requires begin_feed; blocks on full ring, times out after five seconds without progress</td></tr>
@@ -908,7 +961,8 @@ the input and prepares it for the device, then returns while playback continues.
   <tr><td class="num">volume</td><td>float</td><td>Read/write, clamped to 0…4</td></tr>
   <tr><td class="num">position</td><td>float</td><td>Seconds played</td></tr>
   <tr><td class="num">duration</td><td>float | None</td><td>Seconds; <code>None</code> until known</td></tr>
-  <tr><td class="num">is_playing</td><td>bool</td><td><code>False</code> when paused, stopped or finished</td></tr>
+  <tr><td class="num">is_playing</td><td>bool</td><td><code>True</code> while a source is active and not paused; <code>False</code> once stopped or finished</td></tr>
+  <tr><td class="num">paused</td><td>bool</td><td>Read-only; <code>True</code> after <code>pause()</code> until <code>resume()</code>, and <code>False</code> after <code>stop()</code></td></tr>
   <tr><td class="num">queue</td><td>list[str]</td><td>Paths waiting behind the current track</td></tr>
   <tr><td class="num">underruns</td><td>int</td><td>Ring-starvation callbacks after audio started; excludes silence from lock contention</td></tr>
   <tr><td class="num">latency</td><td>float | None</td><td>Last device latency in milliseconds</td></tr>
@@ -939,13 +993,15 @@ with sound_rs.Player() as player:
 page(
     "benchmarks.html",
     "Benchmarks",
-    "How sound_rs compares with libsndfile and sounddevice: methodology, full tables, and the cases where it loses.",
+    "How sound_rs compares with soundfile, sounddevice, miniaudio, librosa and pydub: methodology, full tables, and the cases where it loses.",
     """
 <p class="kicker">10 · Reference</p>
 <h1>Benchmarks</h1>
 <p class="lead">Historical 0.3.0 measurements with the method next to them, including rows
 where the library is slower. These device measurements were not rerun during the current
 headless engineering validation and are not performance guarantees.</p>
+<p>Current local comparison (2026-11-12): soundfile, sounddevice, miniaudio, librosa and
+pydub on an Apple M5 Pro — <a href="https://github.com/Neksand/sound_rs/blob/master/bench/REPORT-2026-11-12.md">full report</a>.</p>
 
 <h2 id="method">Method</h2>
 <ul>
@@ -979,7 +1035,7 @@ headless engineering validation and are not performance guarantees.</p>
   <tr><th>Format</th><th class="num">sound_rs</th><th class="num">libsndfile</th><th>PCM check</th></tr>
   <tr><td>WAV 16-bit</td><td class="num">131 / 160 ms</td><td class="num">155 ms</td><td>identical</td></tr>
   <tr><td>FLAC</td><td class="num">265 / 267 ms</td><td class="num">465 ms</td><td>identical</td></tr>
-  <tr><td>MP3</td><td class="num">241 / 249 ms</td><td class="num">268 ms</td><td>1.6·10⁻⁵, 47 samples offset</td></tr>
+  <tr><td>MP3</td><td class="num">241 / 249 ms</td><td class="num">268 ms</td><td>1.6·10⁻⁵; the historical run had a 47-sample offset</td></tr>
   <tr><td>M4A (AAC)</td><td class="num">361 / 365 ms</td><td class="num">unsupported</td><td>8·10⁻⁸ vs ffmpeg</td></tr>
 </table>
 
@@ -996,7 +1052,7 @@ the device setup and lands around +180 ms.</p>
 <h2 id="reproduce">Reproduce it</h2>
 """ + code("""
 python bench/run.py                 # sound_rs only
-python bench/run.py --compare       # + soundfile / sounddevice
+python bench/run.py --compare       # + soundfile / sounddevice / miniaudio / librosa / pydub when installed
 python bench/run.py --reps 9
 """, "bash") + """
 <p>The harness generates its corpus (3 s and 10 min, WAV plus MP3/FLAC/M4A when ffmpeg is
@@ -1005,8 +1061,9 @@ run takes about three minutes on the machine above.</p>
 
 <h2 id="caveats">Where it loses</h2>
 <ul>
-  <li><strong>MP3 alignment</strong>: 47 samples (~1 ms) earlier than libsndfile and ffmpeg.
-      Length is exact; values match after alignment.</li>
+  <li><strong>MP3 alignment</strong>: the historical run had a 47-sample offset. All MP3 paths
+      now use Symphonia, and the committed fixture aligns with ffmpeg at lag 0; the timings
+      above remain the 0.3.0 minimp3 measurements.</li>
   <li><strong>WAV decode</strong>: a memcpy race with libsndfile, 1.2× is all there is.</li>
   <li><strong>AAC decode</strong> is slower than the other formats — a newer decoder with less
       tuning — though libsndfile cannot decode it at all.</li>
@@ -1087,9 +1144,9 @@ import sound_rs
 await asyncio.to_thread(sound_rs.play_audio, "track.flac")
 """) + """
 <h2 id="mp3-offset">MP3 samples do not line up with another library</h2>
-<p>Different decoders trim the encoder delay slightly differently. sound_rs starts 47 samples
-(~1 ms) earlier than libsndfile and ffmpeg on LAME files; lengths match exactly. If you compare
-waveforms, align first. See <a href="formats.html#gapless">Formats and gapless</a>.</p>
+<p>All MP3 paths now use Symphonia, and the tested fixture aligns with ffmpeg at lag 0. The old
+minimp3 path had a 47-sample offset; that decoder is gone. Remaining differences depend on the
+other library's gapless handling. See <a href="formats.html#gapless">Formats and gapless</a>.</p>
 
 <h2 id="numpy">"Input must be a 1D or 2D numpy array of float32"</h2>
 <p>NumPy's maths returns float64 by default:</p>
@@ -1112,48 +1169,29 @@ page(
     """
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
-<h2 id="unreleased-media">Unreleased — media validation</h2>
+<h2 id="v050">0.5.0</h2>
+<p class="kicker">streaming, formats, agent CLI</p>
 <ul>
-  <li>Bounds-check MP4 box lengths before arithmetic and slicing.</li>
-  <li>Cap metadata-driven initial decode reservations at 32 MiB; this is not a limit on
-      total decoded audio memory.</li>
-  <li>Validate WAV dimensions, sizes and finite samples before touching the destination;
-      include odd PCM24 padding in RIFF size and classify write errors as <code>io</code>.</li>
-  <li>Use checked NumPy read borrows; reject zero or overflowing channel counts.</li>
-  <li>Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and
-      disk I/O release the GIL.</li>
-</ul>
-<h2 id="unreleased-player">Unreleased — playback lifecycle</h2>
-<ul>
-  <li>Drain the final written audio prefix, complete empty feeds and time out only stalled
-      producers. Paused wait returns without discarding the queue.</li>
-  <li>Preserve pause/queue across seek, track the active queued file, and reject invalid
-      source transitions, non-finite samples/volume, incomplete frames and zero rates.</li>
-  <li>Report backend failures through an atomic flag and avoid blocking on callback state
-      contention. Keep hardware recovery and continuous feed resampling as future work.</li>
-</ul>
-<h2 id="unreleased-recorder">Unreleased — bounded recording</h2>
-<ul>
-  <li>Move capture allocation and synchronization out of the input callback into a collector
-      behind a bounded ring; preserve the 230 M sample storage limit.</li>
-  <li>Report overflow, allocation and device faults; drain final input on shutdown and
-      release the GIL while joining the collector.</li>
-  <li>Make the documented <code>record_to(..., subtype="pcm16")</code> default effective at
-      runtime and include context manager methods in the type stub.</li>
-</ul>
-<h2 id="unreleased-resampler">Unreleased — streaming resampler</h2>
-<ul>
-  <li>Drain filter delay at EOF even when input ends on a full block, remove startup delay
-      for very short tracks, and trim output padding to the exact converted frame count.</li>
-  <li>Test numerical output against a full filter pass across packet sizes, sample rates,
-      stereo channels and impulses at the end of a track. Full-decode fixtures are unchanged.</li>
-</ul>
-<h2 id="unreleased-dependencies">Unreleased — Python bindings</h2>
-<ul>
-  <li>Upgrade PyO3 to 0.29.3 and the numpy Rust crate to 0.29, removing affected PyO3
-      versions from two RustSec advisory ranges while preserving the Python 3.10+ stable ABI.</li>
-  <li>Explicitly retain the GIL requirement. Decoder dependencies and fixture hashes are
-      unchanged; the separate minimp3/slice-ring-buffer advisory remains unresolved.</li>
+  <li><code>sound_rs.Decoder</code>: bounded-memory incremental reads with optional
+      resampling and mono folding, iteration, <code>read()</code> and context management.</li>
+  <li><code>write_bytes()</code> encodes WAV without touching disk; <code>load_many(
+      on_error="skip")</code> keeps batches going past corrupt files.</li>
+  <li>CLI: <code>soundrs info --json</code> and <code>soundrs convert</code>, with typed
+      exit codes and no new dependencies.</li>
+  <li>AIFF, CAF and ALAC-in-M4A decoding with lossless fixtures; <code>pathlib.Path</code>
+      is accepted wherever a file path is taken.</li>
+  <li>One MP3 decoder: Symphonia replaces minimp3 for full-file, bytes, windows and
+      streaming. The 47-sample LAME/Xing offset is gone; MP3 regression uses a sample hash.
+      Full-file MP3 decode is about 26% slower on the 60-second benchmark (~2,000× realtime).</li>
+  <li>Continuous fed resampling with retained filter state; <code>end_feed()</code> flushes
+      the tail. <code>Player.paused</code> reports pause state.</li>
+  <li>Fail <code>play_file()</code> before replacing playback on an unreadable path; raise
+      an error when a whole-buffer resampler cannot run; validate <code>record_to()</code>
+      destinations before capture; reject <code>record()</code> outside 0…3600 seconds.</li>
+  <li>Linux wheels bundle the ALSA runtime; source builds need ALSA development headers.
+      Release validation checks the bundled library instead of installing one.</li>
+  <li>CI runs Python 3.13, tests without the default <code>numpy</code> feature, and runs
+      <code>cargo audit</code> without ignores (192 packages, no advisories).</li>
 </ul>
 <p class="lead">Short history. Full notes with diffs live on
 <a href="https://github.com/Neksand/sound_rs/releases">GitHub Releases</a>.</p>
@@ -1284,7 +1322,7 @@ from the list on the left.</p>
 page(
     "cli.html",
     "Command line",
-    "The soundrs command: play a file, inspect metadata, list output devices, and find the documentation from a terminal.",
+    "The soundrs command: play a file, inspect JSON metadata, convert to WAV, list output devices, and find the documentation from a terminal.",
     """
 <p class="kicker">03 · Start</p>
 <h1>Command line</h1>
@@ -1300,7 +1338,8 @@ sound_rs — audio for Python
 Usage
   soundrs <command> [options]
   soundrs play <file> [--device <name>] [--volume <0-4>]
-  soundrs info <file>
+  soundrs info <file> [--json]
+  soundrs convert <input> <output.wav> [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
   soundrs --version
@@ -1310,7 +1349,11 @@ Commands
   play     Play a file and wait until it ends.
            --device <name>   output device, see `soundrs devices`
            --volume <number> 0 to 4, default 1
-  info     Sample rate, channels and duration, read from the header only.
+  info     Sample rate, channels and duration.
+           Reads the header when complete; decodes only when duration/format info is missing.
+           --json            one line of JSON instead of the human output
+  convert  Decode any supported file and write it as WAV.
+           --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
 
@@ -1322,7 +1365,8 @@ Links
 <table>
   <tr><th>Command</th><th>What it does</th></tr>
   <tr><td class="num">soundrs play FILE</td><td>Plays a file and waits. <code>--device</code> picks an output device, <code>--volume</code> takes 0…4.</td></tr>
-  <tr><td class="num">soundrs info FILE</td><td>Sample rate, channel count and duration from the container header — no decoding.</td></tr>
+  <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line.</td></tr>
+  <tr><td class="num">soundrs convert IN OUT.wav</td><td>Decodes any supported input and writes PCM16, PCM24 or float32 WAV via <code>--subtype</code>.</td></tr>
   <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
   <tr><td class="num">soundrs docs</td><td>Prints the documentation URL, for scripts and <code>open $(soundrs docs)</code>.</td></tr>
   <tr><td class="num">soundrs --version</td><td>Version on one line, safe to parse.</td></tr>
@@ -1339,12 +1383,21 @@ soundrs devices
 
 # what is this file before writing any code?
 soundrs info podcast.m4a
+
+# machine-readable metadata for scripts and agents
+soundrs info podcast.m4a --json
+
+# convert any supported input to WAV
+soundrs convert voice.mp3 take.wav --subtype pcm24
 """, "bash") + code("""
 $ soundrs info podcast.m4a
 file         podcast.m4a
 sample rate  44100 Hz
 channels     2
 duration     42:13.6 (2533.612 s)
+
+$ soundrs info podcast.m4a --json
+{"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612}
 """, "text") + note(
         "Exit codes",
         "<code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), "
@@ -1417,6 +1470,20 @@ audio, rate = sound_rs.load("lecture.m4a", offset=300.0, duration=30.0)
         "A bounded duration stops decoding after the requested window; seek accuracy and "
         "the work needed to reach it depend on the codec/container.",
     ) + """
+<h2 id="streaming">A file larger than memory</h2>
+""" + code("""
+import sound_rs
+
+with sound_rs.Decoder("lecture.m4a", block_frames=4800,
+                       sample_rate=16000, mono=True) as decoder:
+    for block in decoder:
+        feed(block)          # (4800, 1) float32, bounded memory
+""") + """
+<p><code>Decoder</code> keeps one container reader and resampler alive and returns
+<code>(frames, channels)</code> blocks. <code>read(n)</code> asks for an explicit size;
+iteration uses <code>block_frames</code>. The final block is shorter, and EOF returns an
+empty array.</p>
+
 <h2 id="memory">Memory</h2>
 <table>
   <tr><th>Task</th><th>Sample payload / observation</th></tr>
@@ -1442,7 +1509,8 @@ does not help; the benchmark's scaling scenario measures 1, 2, 4 and 8 workers.<
   <li><strong>Training on the fly</strong> — decode once and store the arrays; repeated
       decoding of the same file is wasted CPU.</li>
   <li><strong>Huge corpora</strong> — <code>load_many</code> returns everything at once. For a
-      corpus larger than RAM, call <code>load</code> per file inside your own batching.</li>
+      corpus larger than RAM, use <code>Decoder</code> or call <code>load</code> per file
+      inside your own batching.</li>
   <li><strong>Augmentation and feature extraction</strong> — not implemented. This library
       gets you clean float32 audio; the DSP belongs to your framework.</li>
 </ul>
@@ -1525,6 +1593,9 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
 <h2 id="limits">Limits</h2>
 <ul>
   <li>Create, use and destroy the recorder on its original thread.</li>
+  <li><code>record(seconds)</code> accepts a finite value in 0…3600 seconds. Anything outside
+      raises <code>SoundRsError(code="usage")</code> instead of clamping; use
+      <code>start()</code>/<code>stop()</code> for longer takes.</li>
   <li>Capture starts when the device delivers its first buffer. Startup latency can make a
       timed take shorter than requested; the recorder does not add frames to hide it.</li>
   <li>The callback writes to a bounded input ring (normally one second, at most 4 MiB).
@@ -1537,7 +1608,8 @@ sound_rs.write("take.wav", audio, rate, subtype="float32")
       faults. <code>stop()</code> drains the final callback and joins the collector with the
       GIL released.</li>
   <li><code>record_to()</code> records to memory before writing the WAV; it is not an
-      incremental disk recorder.</li>
+      incremental disk recorder. It validates the destination path and subtype before
+      capture starts, so a bad argument does not cost a failed take.</li>
   <li>No resampling, mixing or effects on input — capture is raw device audio.</li>
   <li>Playback and recording use independent streams. Simultaneous access depends on backend
       and device support; there is no shared clock or synchronization guarantee.</li>
@@ -1643,8 +1715,8 @@ or proof that arbitrary untrusted media is safe.</p>
 </ul>
 
 <h2 id="determinism">Determinism</h2>
-<p><code>tests/decode_regression.py</code> checks exact dimensions/rates for six fixtures,
-SHA-256 hashes of samples rounded to 10⁻⁴ for five, and an RMS tolerance for MP3. Missing
+<p><code>tests/decode_regression.py</code> checks exact dimensions/rates for nine fixtures
+and SHA-256 hashes of samples rounded to 10⁻⁴ for all of them. Missing fixtures fail.
 fixtures fail the check. These are regression bounds, not a guarantee that every sample change
 is detected or that decoder output is bit-identical across CPUs and dependency versions.</p>
 
@@ -1665,10 +1737,10 @@ is detected or that decoder output is bit-identical across CPUs and dependency v
 <ul>
   <li>Resampling uses rubato's FFT resampler: a 20 kHz tone downsampled to 24 kHz is filtered
       below 10% of its level instead of folding back as an alias.</li>
-  <li>Encoder-delay/padding metadata is used when available; MP3 decoder paths differ and
-      AAC can retain tail padding. See <a href="formats.html#gapless">format limits</a>.</li>
-  <li>Historical test-corpus comparisons found identical WAV/FLAC PCM, MP3 agreement within
-      1.6·10⁻⁵ after a 47-sample alignment adjustment, and AAC agreement within 8·10⁻⁸.
+  <li>Encoder-delay/padding metadata is used when available; all MP3 paths use one Symphonia
+      decoder, and AAC can retain tail padding. See <a href="formats.html#gapless">format limits</a>.</li>
+  <li>The committed MP3 fixture aligns with ffmpeg at lag 0; the historical minimp3 run had a
+      47-sample offset. WAV/FLAC PCM is identical, and AAC agrees within 8·10⁻⁸ on the fixture.
       These are fixture results, not universal codec guarantees.</li>
 </ul>
 

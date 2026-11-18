@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -33,7 +33,9 @@
 <h1>API reference</h1>
 <p class="lead">Functions for files and arrays, plus persistent <code>Player</code> and
 <code>Recorder</code> classes. Library failures use <code>sound_rs.SoundRsError</code>;
-Python argument conversion can raise <code>TypeError</code> or <code>OverflowError</code>.</p>
+Python argument conversion can raise <code>TypeError</code> or <code>OverflowError</code>.
+Every file-path argument accepts <code>str</code> or <code>os.PathLike[str]</code>, such as
+<code>pathlib.Path</code>; non-UTF-8 path bytes raise <code>SoundRsError(code="usage")</code>.</p>
 
 <h2 id="module">Module</h2>
 <p><code class="num">sound_rs.__version__</code> — the installed version as a string, for example
@@ -42,7 +44,7 @@ Python argument conversion can raise <code>TypeError</code> or <code>OverflowErr
 <code>.code</code>; see <a href="guarantees.html#errors">error codes</a>.</p>
 
 <h2 id="play-audio">play_audio</h2>
-<pre data-lang=""><code>sound_rs.play_audio(file_path: str, device: str | None = None) -&gt; None</code></pre>
+<pre data-lang=""><code>sound_rs.play_audio(file_path: str | os.PathLike[str], device: str | None = None) -&gt; None</code></pre>
 <p>Plays a file and blocks until it ends, releasing the GIL while waiting for playback.
 Opens the output device for this call; startup cost depends on the backend and device.
 Use <a href="#player">Player</a> for repeated playback.</p>
@@ -58,20 +60,20 @@ disconnects mid-playback.</p>
 sound_rs.play_audio(&quot;music.flac&quot;)
 sound_rs.play_audio(&quot;music.flac&quot;, device=&quot;MacBook Pro Speakers&quot;)</code></pre>
 <h2 id="is-supported-format">is_supported_format</h2>
-<pre data-lang=""><code>sound_rs.is_supported_format(file_path: str) -&gt; bool</code></pre>
+<pre data-lang=""><code>sound_rs.is_supported_format(file_path: str | os.PathLike[str]) -&gt; bool</code></pre>
 <p>Probes the container header. Does not decode or verify codec support and packet integrity.
 A missing or unrecognized file returns <code>False</code>. Probe time depends on the container
 and storage.</p>
 
 <h2 id="get-audio-info">get_audio_info</h2>
-<pre data-lang=""><code>sound_rs.get_audio_info(file_path: str) -&gt; tuple[int, int, float]</code></pre>
+<pre data-lang=""><code>sound_rs.get_audio_info(file_path: str | os.PathLike[str]) -&gt; tuple[int, int, float]</code></pre>
 <p>Returns <code>(sample_rate, channels, duration_seconds)</code>. Uses the header when complete;
 missing rate or channel information can require decoding a packet.</p>
 <p>If the header has no frame count, the file is decoded to measure duration. The returned
 duration is a number; this function does not return <code>None</code>.</p>
 
 <h2 id="load">load</h2>
-<pre data-lang=""><code>sound_rs.load(file_path: str, sample_rate: int | None = None,
+<pre data-lang=""><code>sound_rs.load(file_path: str | os.PathLike[str], sample_rate: int | None = None,
               mono: bool = False, offset: float = 0.0,
               duration: float | None = None) -&gt; tuple[numpy.ndarray, int]</code></pre>
 <p>Decodes to float32 with shape <code>(frames, channels)</code>, returning the array and rate.
@@ -87,15 +89,19 @@ positive; invalid options raise <code>SoundRsError(code="usage")</code> before f
 <code>mono=True</code> averages channels before resampling.</p>
 
 <h2 id="load-many">load_many</h2>
-<pre data-lang=""><code>sound_rs.load_many(paths: Sequence[str], threads: int | None = None,
-                   sample_rate: int | None = None, mono: bool = False)
-    -&gt; list[tuple[numpy.ndarray, int]]</code></pre>
+<pre data-lang=""><code>sound_rs.load_many(paths: Sequence[str | os.PathLike[str]], threads: int | None = None,
+                   sample_rate: int | None = None, mono: bool = False,
+                   on_error: str = &quot;raise&quot;)
+    -&gt; list[tuple[numpy.ndarray, int] | None]</code></pre>
 <p>Decodes in parallel with a Rayon pool, releasing the GIL. Order matches <code>paths</code>.
-<code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. All files
-are processed, then the first failure in input order is raised. A requested sample rate must
-be positive, including for an empty batch. Optional rate and mono conversion apply to every file; the
-whole batch is retained in memory.</p>
-<pre data-lang=""><code>clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;], threads=2)</code></pre>
+<code>threads=None</code> or <code>threads=0</code> uses the automatic worker count. With
+<code>on_error="raise"</code> the first failure in input order raises; with
+<code>on_error="skip"</code> that slot is <code>None</code> and the rest of the batch still
+decodes. Any other value raises <code>SoundRsError(code="usage")</code> before decoding. A
+requested sample rate must be positive, including for an empty batch. Optional rate and mono
+conversion apply to every file; the whole batch is retained in memory.</p>
+<pre data-lang=""><code>clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;], threads=2, on_error=&quot;skip&quot;)
+good = [clip for clip in clips if clip is not None]</code></pre>
 <h2 id="play-array">play_array</h2>
 <pre data-lang=""><code>sound_rs.play_array(array: numpy.ndarray, sample_rate: int) -&gt; None</code></pre>
 <p>Plays a float32 array: <code>(frames,)</code> for mono or <code>(channels, frames)</code>
@@ -118,7 +124,8 @@ returns an exit code. You do not call it from Python — see
 <a href="cli.html">Command line</a>.</p>
 
 <h2 id="write">write</h2>
-<pre data-lang=""><code>sound_rs.write(file_path: str, audio, sample_rate: int, subtype: str = &quot;pcm16&quot;) -&gt; None</code></pre>
+<pre data-lang=""><code>sound_rs.write(file_path: str | os.PathLike[str], audio, sample_rate: int,
+               subtype: str = &quot;pcm16&quot;) -&gt; None</code></pre>
 <p>Writes float32 audio to a WAV file. The array is <code>(frames,)</code> for mono or
 <code>(frames, channels)</code> — the same layout <code>load</code> returns, so
 <code>sound_rs.write(path, *sound_rs.load(src))</code> round-trips. Samples outside −1…1 are
@@ -134,12 +141,20 @@ infinity, incomplete frames, and files too large for classic RIFF are rejected w
 Read-only and strided float32 arrays are accepted; float64 remains a <code>TypeError</code>.</p>
 <pre data-lang=""><code>audio, rate = sound_rs.load(&quot;take.flac&quot;)
 sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;pcm24&quot;)</code></pre>
+<h2 id="write-bytes">write_bytes</h2>
+<pre data-lang=""><code>sound_rs.write_bytes(audio, sample_rate: int, subtype: str = &quot;pcm16&quot;) -&gt; bytes</code></pre>
+<p>Encodes the same <code>(frames,)</code> or <code>(frames, channels)</code> float32 input as
+<a href="#write">write</a> and returns the complete WAV file as <code>bytes</code>. Nothing is
+written to disk. Validation and error codes match <code>write</code>; encoding releases the
+GIL. Useful for HTTP responses, object storage and tests.</p>
+<pre data-lang=""><code>raw = sound_rs.write_bytes(audio, rate, subtype=&quot;pcm24&quot;)
+open(&quot;take.wav&quot;, &quot;wb&quot;).write(raw)</code></pre>
 <h2 id="load-bytes">load_bytes</h2>
 <pre data-lang=""><code>sound_rs.load_bytes(data: bytes) -&gt; tuple[numpy.ndarray, int]</code></pre>
 <p>Decodes bytes to a float32 <code>(frames, channels)</code> array and its sample rate.
-AAC-in-MP4 priming is read from the buffer's edit list. MP3 uses Symphonia here, while a
-full-file <code>load</code> uses minimp3; samples and alignment can differ. Malformed data can
-raise <code>SoundRsError(code="format")</code>; an unexpected EOF may yield a decodable prefix.</p>
+AAC-in-MP4 priming is read from the buffer's edit list. MP3 uses the same Symphonia path as a
+full-file <code>load</code>. Malformed data can raise <code>SoundRsError(code="format")</code>;
+an unexpected EOF may yield a decodable prefix.</p>
 
 <h2 id="list-devices">list_devices</h2>
 <pre data-lang=""><code>sound_rs.list_devices() -&gt; list[tuple[int, str, bool]]</code></pre>
@@ -155,7 +170,7 @@ there is no microphone or the OS denies access.</p>
   <tr><td class="num">start()</td><td>None</td><td>Starts capturing</td></tr>
   <tr><td class="num">stop()</td><td>(ndarray, rate)</td><td>Stops and returns what was captured</td></tr>
   <tr><td class="num">record(seconds)</td><td>(ndarray, rate)</td><td>start + wait + stop</td></tr>
-  <tr><td class="num">record_to(path, seconds, subtype="pcm16")</td><td>None</td><td>Capture in memory, then write a WAV</td></tr>
+  <tr><td class="num">record_to(path, seconds, subtype="pcm16")</td><td>None</td><td>Capture in memory, then write a WAV; path accepts <code>str</code> or <code>os.PathLike</code>, validated with the subtype before capture; also limited to 0…3600 seconds</td></tr>
   <tr><td class="num">device / sample_rate / channels</td><td>str / int / int</td><td>Device properties</td></tr>
 </table>
 
@@ -164,6 +179,27 @@ there is no microphone or the OS denies access.</p>
 <p>Input devices as <code>(index, name, is_default)</code>. The name is what
 <code>Recorder(device=...)</code> accepts.</p>
 
+<h2 id="decoder">Decoder</h2>
+<pre data-lang=""><code>sound_rs.Decoder(file_path, block_frames: int = 48000,
+                 sample_rate: int | None = None, mono: bool = False)</code></pre>
+<p>Incremental decoder for files larger than memory. Returns float32
+<code>(frames, channels)</code> blocks, with the same channel/delay handling as
+<code>load</code>. <code>sample_rate</code> resamples with retained filter state and
+<code>mono</code> folds channels. Paths accept <code>str</code> or <code>os.PathLike</code>.</p>
+<table>
+  <tr><th>Member</th><th>Returns</th><th>Notes</th></tr>
+  <tr><td class="num">sample_rate</td><td>int</td><td>Output rate after optional resampling</td></tr>
+  <tr><td class="num">channels</td><td>int</td><td>Output channel count; AAC is primed so this is known before the first read</td></tr>
+  <tr><td class="num">duration</td><td>float | None</td><td>Container duration when available</td></tr>
+  <tr><td class="num">block_frames</td><td>int</td><td>Default block size used by iteration and <code>read()</code></td></tr>
+  <tr><td class="num">read(frames=None)</td><td>ndarray</td><td>Up to <code>frames</code>; empty <code>(0, channels)</code> at EOF</td></tr>
+  <tr><td class="num">close()</td><td>None</td><td>Releases the decoder; later reads raise <code>usage</code></td></tr>
+</table>
+<p>Iteration returns blocks until EOF. The object is a context manager. For AAC-in-MP4,
+the streaming path can trim tail padding that a whole-file <code>load</code> may retain.</p>
+<pre data-lang=""><code>with sound_rs.Decoder(&quot;long.flac&quot;, block_frames=4800, sample_rate=16000, mono=True) as d:
+    for block in d:
+        process(block)          # (4800, 1) float32 until the final partial block</code></pre>
 <h2 id="player">Player</h2>
 <pre data-lang=""><code>sound_rs.Player(device: str | None = None)</code></pre>
 <p>Opens one output stream and keeps it open. Device name matching is exact; the default device
@@ -173,7 +209,7 @@ stops playback on exit; the device stream closes when the object is destroyed.</
 <h3 id="methods">Methods</h3>
 <table>
   <tr><th>Signature</th><th>Returns</th><th>Notes</th></tr>
-  <tr><td class="num">play_file(path)</td><td>None</td><td>Streams from disk, returns immediately</td></tr>
+  <tr><td class="num">play_file(path)</td><td>None</td><td>Probes the header, then streams from disk and returns before playback finishes; path accepts <code>str</code> or <code>os.PathLike</code></td></tr>
   <tr><td class="num">play_array(array, rate)</td><td>None</td><td>1D or 2D float32</td></tr>
   <tr><td class="num">play_samples(samples, src_channels, sample_rate)</td><td>None</td><td>Interleaved Python sequence, converted to float32; no NumPy required</td></tr>
   <tr><td class="num">pause()</td><td>None</td><td>Position freezes</td></tr>
@@ -181,7 +217,7 @@ stops playback on exit; the device stream closes when the object is destroyed.</
   <tr><td class="num">stop()</td><td>None</td><td>Clears source/queue and resets position; keeps device open</td></tr>
   <tr><td class="num">seek(seconds)</td><td>None</td><td>Finite file/array target, clamped to known duration; preserves pause</td></tr>
   <tr><td class="num">wait()</td><td>None</td><td>Waits for completion/drain or returns while paused/stopped; GIL released</td></tr>
-  <tr><td class="num">enqueue(path)</td><td>None</td><td>Requires active file source; up to 128 waiting entries</td></tr>
+  <tr><td class="num">enqueue(path)</td><td>None</td><td>Requires active file source; up to 128 waiting entries; path accepts <code>str</code> or <code>os.PathLike</code></td></tr>
   <tr><td class="num">clear_queue()</td><td>None</td><td>Drops everything queued</td></tr>
   <tr><td class="num">begin_feed(rate)</td><td>None</td><td>Switches to samples pushed from Python</td></tr>
   <tr><td class="num">feed(array)</td><td>None</td><td>Requires begin_feed; blocks on full ring, times out after five seconds without progress</td></tr>
@@ -201,7 +237,8 @@ the input and prepares it for the device, then returns while playback continues.
   <tr><td class="num">volume</td><td>float</td><td>Read/write, clamped to 0…4</td></tr>
   <tr><td class="num">position</td><td>float</td><td>Seconds played</td></tr>
   <tr><td class="num">duration</td><td>float | None</td><td>Seconds; <code>None</code> until known</td></tr>
-  <tr><td class="num">is_playing</td><td>bool</td><td><code>False</code> when paused, stopped or finished</td></tr>
+  <tr><td class="num">is_playing</td><td>bool</td><td><code>True</code> while a source is active and not paused; <code>False</code> once stopped or finished</td></tr>
+  <tr><td class="num">paused</td><td>bool</td><td>Read-only; <code>True</code> after <code>pause()</code> until <code>resume()</code>, and <code>False</code> after <code>stop()</code></td></tr>
   <tr><td class="num">queue</td><td>list[str]</td><td>Paths waiting behind the current track</td></tr>
   <tr><td class="num">underruns</td><td>int</td><td>Ring-starvation callbacks after audio started; excludes silence from lock contention</td></tr>
   <tr><td class="num">latency</td><td>float | None</td><td>Last device latency in milliseconds</td></tr>
@@ -227,10 +264,10 @@ with sound_rs.Player() as player:
 
 <div class="next"><a href="migration.html">← Coming from another library</a><a href="benchmarks.html">Benchmarks →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#write">write</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#write">write</a><a href="#write-bytes">write_bytes</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#decoder">Decoder</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

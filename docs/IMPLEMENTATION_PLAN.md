@@ -24,15 +24,19 @@ Baseline and evidence: [engineering audit](reports/ENGINEERING_AUDIT.md),
 6. **Dependencies.** Trial the smallest compatible PyO3/NumPy upgrade fixing known PyO3 advisories.
    Acceptance: no direct dependency addition, ABI remains Python 3.10+, full validation unchanged;
    unremediated MP3 transitive risk remains explicit.
+7. **Continuous fed resampling.** Retain rubato filter state across `feed()` blocks and flush the
+   tail in `end_feed()`. Acceptance: non-device feed rates use one streaming resampler instead of
+   per-block `resample_all`; long-run frame accounting matches the streaming resampler tests.
+8. **One MP3 decoder.** Remove minimp3 and the `slice-ring-buffer` advisory dependency; use
+   Symphonia for full-file, bytes, window and streaming MP3. Acceptance: fixture aligns with
+   ffmpeg at lag 0, MP3 hash regression, `cargo audit` clean, measured throughput documented.
 
 ## Deferred milestones and acceptance criteria
 
 | Priority | Milestone | Required evidence before implementation/claim |
 | --- | --- | --- |
-| P1 | Resolve minimp3 transitive advisory | Reviewed upstream fix or decoder replacement; nonperiodic mono/stereo golden audio, independent FFmpeg comparison, license/performance review |
 | P1 | Decode resource limits and changing specs | Explicit allocation/frame budget and stable API errors; hostile metadata and multitrack fixtures |
 | P1 | Device tests and recovery | Windows/Linux/macOS device runs; disconnect/reconnect/cancel tests; bounded shutdown; no automatic recovery claim until verified |
-| P2 | Continuous fed resampling | Retained filter state across feed blocks, exact long-run frame accounting, impulse/sine boundary tests |
 | P2 | Incremental WAV recording/writing | Bounded memory across long takes, correct finalized headers/cancellation, disk-failure tests |
 | P2 | Frame-first editing and level analysis | Explicit units/ownership/empty/NaN semantics; trim/join/gain/fade/normalize/RMS/peak mathematical tests and meaningful benchmarks |
 | P3 | FFT/STFT/filtering/synthesis | Document normalization/window/latency, frequencies/axes and channel handling; independent numerical references |

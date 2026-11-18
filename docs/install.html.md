@@ -35,11 +35,13 @@ maturin develop --release
 
 ## Linux audio
 
-Playback uses ALSA through `cpal`. Most desktops already have the runtime library; a minimal container or server needs it explicitly:
+Playback uses ALSA through `cpal`. The Linux wheels bundle the ALSA runtime library, so `import sound_rs`, decoding, metadata and `soundrs info` work in a slim container without installing system packages. Playback still needs an output device; with none, it raises `SoundRsError(code="device")`.
+
+Source builds need the ALSA development headers:
 
 ```bash
-sudo apt install libasound2          # Debian / Ubuntu (libasound2t64 on 24.04+)
-sudo dnf install alsa-lib            # Fedora
+sudo apt install libasound2-dev      # Debian / Ubuntu
+sudo dnf install alsa-lib-devel      # Fedora
 ```
 
 ## Check it works

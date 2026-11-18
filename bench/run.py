@@ -165,6 +165,28 @@ def worker(kind, target, extra):
         import soundfile
 
         soundfile.read(target, dtype="float32")
+    elif kind == "decode_miniaudio":
+        import miniaudio
+        import numpy as np
+
+        decoded = miniaudio.decode_file(target)
+        samples = np.asarray(decoded.samples, dtype=np.float32) / 32768.0
+        result["frames"] = samples.size // decoded.nchannels
+        result["rate"] = decoded.sample_rate
+    elif kind == "decode_librosa":
+        import librosa
+
+        samples, rate = librosa.load(target, sr=None, mono=False)
+        result["frames"] = int(samples.shape[-1])
+        result["rate"] = int(rate)
+    elif kind == "decode_pydub":
+        import numpy as np
+        from pydub import AudioSegment
+
+        segment = AudioSegment.from_file(target)
+        samples = np.asarray(segment.get_array_of_samples(), dtype=np.float32) / 32768.0
+        result["frames"] = samples.size // segment.channels
+        result["rate"] = segment.frame_rate
     elif kind == "pcm":
         import numpy as np
         import sound_rs
@@ -369,11 +391,19 @@ def measure(kind, target="", extra="", reps=REPS, python=None, timeout=WORKER_TI
     seconds = [run["seconds"] for run in runs]
     cpu = [run["cpu"] for run in runs if "cpu" in run]
     peak = [run["peak_mb"] for run in runs if run.get("peak_mb") is not None]
-    extras = {
-        key: value
-        for key, value in runs[-1].items()
-        if key not in {"seconds", "cpu", "peak_mb"}
-    }
+    extras = {}
+    keys = set().union(*(run.keys() for run in runs)) - {"seconds", "cpu", "peak_mb"}
+    for key in keys:
+        values = [run[key] for run in runs if key in run]
+        if values and all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            for value in values
+        ):
+            extras[key] = statistics.median(values)
+        elif values:
+            extras[key] = values[-1]
     return summarise(seconds, cpu or None, peak or None, extras)
 
 
@@ -408,6 +438,32 @@ def line(name, variant, stats, baseline=None):
     if delta:
         parts.append(f"{delta} vs base")
     print(f"  {variant:<12} " + "  ".join(parts))
+
+
+def scenario_detail(name, stats):
+    if name == "first_sound":
+        value = stats.get("first_sound")
+        if value is not None:
+            return f"first audio {fmt_seconds({'median': value})}"
+    elif name == "playback":
+        value = stats.get("play_seconds", stats["median"])
+        return f"overhead {value - 3.0:+.3f} s"
+    elif name == "stream":
+        return f"{stats.get('rtf', 0):.2f}x realtime, underruns {stats.get('underruns', 0)}"
+    elif name == "soak":
+        return (
+            f"RSS {stats.get('rss_start', 0):.0f} -> {stats.get('rss_end', 0):.0f} MB"
+            f" (growth {stats.get('rss_growth', 0):+.1f})"
+        )
+    elif name == "batch":
+        return f"{stats.get('files', '?')} files"
+    elif name == "batch_scaling":
+        scaling = stats.get("scaling") or {}
+        return ", ".join(
+            f"{threads} thr {seconds * 1000:.0f} ms"
+            for threads, seconds in sorted(scaling.items())
+        )
+    return ""
 
 
 def main():
@@ -457,7 +513,7 @@ def main():
 
     # import
     print("\nimport time (cold process)")
-    for module in ["sound_rs", "soundfile", "sounddevice"]:
+    for module in ["sound_rs", "soundfile", "sounddevice", "miniaudio", "librosa", "pydub"]:
         if args.no_audio and module == "sounddevice":
             continue
         if module != "sound_rs" and not (args.compare and available(module)):
@@ -479,7 +535,7 @@ def main():
             record(f"metadata:{name}", "sound_rs", meta)
 
         if args.compare:
-            if available("soundfile"):
+            if available("soundfile") and not name.endswith(".m4a"):
                 sf_meta = measure("metadata_sf", path, reps=args.reps, python=args.python, timeout=args.timeout)
                 sf_dec = measure("decode_sf", path, reps=args.reps, python=args.python, timeout=args.timeout)
                 if sf_meta:
@@ -487,7 +543,22 @@ def main():
                 if sf_dec:
                     record(f"decode:{name}", "soundfile", sf_dec)
                     line(f"decode:{name}", "soundfile", sf_dec)
-            if dec:
+            for module, kind in [
+                ("miniaudio", "decode_miniaudio"),
+                ("librosa", "decode_librosa"),
+                ("pydub", "decode_pydub"),
+            ]:
+                if module in {"miniaudio", "librosa"} and name.endswith(".m4a"):
+                    # Neither miniaudio nor libsndfile decodes this AAC-in-MP4 corpus.
+                    continue
+                if available(module):
+                    competitor = measure(
+                        kind, path, reps=args.reps, python=args.python, timeout=args.timeout
+                    )
+                    if competitor:
+                        record(f"decode:{name}", module, competitor)
+                        line(f"decode:{name}", module, competitor)
+            if dec and not name.endswith(".m4a"):
                 pcm = spawn("pcm", path, python=args.python, timeout=args.timeout)
                 if pcm:
                     detail = (
@@ -567,13 +638,17 @@ def main():
             if batch_sf:
                 record("batch", "soundfile", batch_sf)
                 print(f"  {'soundfile':<12} {fmt_seconds(batch_sf)}")
-        scaling = measure("batch_scaling", extra=flacs, reps=1, python=args.python, timeout=args.timeout)
-        if scaling and "scaling" in scaling:
-            parts = [
-                f"{threads} thr {seconds * 1000:.0f} ms"
-                for threads, seconds in sorted(scaling["scaling"].items())
-            ]
-            print("  scaling      " + ", ".join(parts))
+        short_flac = files.get("short.flac")
+        scaling_paths = ",".join([short_flac] * 8) if short_flac else flacs
+        scaling = measure("batch_scaling", extra=scaling_paths, reps=1, python=args.python, timeout=args.timeout)
+        if scaling:
+            record("batch_scaling", "sound_rs", scaling)
+            if "scaling" in scaling:
+                parts = [
+                    f"{threads} thr {seconds * 1000:.0f} ms"
+                    for threads, seconds in sorted(scaling["scaling"].items())
+                ]
+                print("  scaling      " + ", ".join(parts))
 
     if not args.no_audio:
         # soak
@@ -612,15 +687,28 @@ def main():
             )
             for name in sorted(results):
                 handle.write(f"## {name}\n\n")
-                handle.write("| variant | median | p95 | p99 | cpu | rss |\n")
-                handle.write("|---|---|---|---|---|---|\n")
+                handle.write("| variant | median | p95 | p99 | cpu | rss | detail |\n")
+                handle.write("|---|---|---|---|---|---|---|\n")
                 for variant, stats in sorted(results[name].items()):
                     handle.write(
                         f"| {variant} | {fmt_seconds(stats)} | "
                         f"{fmt_seconds(stats, 'p95')} | {fmt_seconds(stats, 'p99')} | "
-                        f"{stats.get('cpu', 0):.2f}s | {stats.get('peak_mb', 0):.0f}MB |\n"
+                        f"{stats.get('cpu', 0):.2f}s | {stats.get('peak_mb', 0):.0f}MB | "
+                        f"{scenario_detail(name, stats)} |\n"
                     )
                 handle.write("\n")
+            handle.write(
+                "## Notes\n\n"
+                "- Decode workers normalize to float32: sound_rs, soundfile and librosa "
+                "already return float32; miniaudio and pydub are converted from int16.\n"
+                "- pydub decodes through an ffmpeg subprocess; librosa uses soundfile/"
+                "audioread. They are wrappers, not independent decoders.\n"
+                "- The `median` column is whole-worker wall time. `detail` shows in-process "
+                "first-audio time, playback overhead, realtime factor or soak RSS.\n"
+                "- soundfile, librosa and miniaudio cannot open the AAC-in-MP4 corpus; "
+                "pydub can via ffmpeg.\n"
+                "- Peak RSS is process-wide and includes the interpreter and imports.\n"
+            )
         print(f"\nreport written to {args.report}")
 
     print(f"results written to {args.out}\n")

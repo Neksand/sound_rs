@@ -2,6 +2,8 @@
 
 Historical 0.3.0 measurements with the method next to them, including rows where the library is slower. These device measurements were not rerun during the current headless engineering validation and are not performance guarantees.
 
+Current local comparison (2026-11-12): soundfile, sounddevice, miniaudio, librosa and pydub on an Apple M5 Pro — [full report](https://github.com/Neksand/sound_rs/blob/master/bench/REPORT-2026-11-12.md).
+
 ## Method
 
 - Every measurement runs in a **separate process**: peak RSS is process-wide, so timing and memory cannot share one.
@@ -35,7 +37,7 @@ Historical 0.3.0 measurements with the method next to them, including rows where
 |---|---|---|---|
 | WAV 16-bit | 131 / 160 ms | 155 ms | identical |
 | FLAC | 265 / 267 ms | 465 ms | identical |
-| MP3 | 241 / 249 ms | 268 ms | 1.6·10⁻⁵, 47 samples offset |
+| MP3 | 241 / 249 ms | 268 ms | 1.6·10⁻⁵; the historical run had a 47-sample offset |
 | M4A (AAC) | 361 / 365 ms | unsupported | 8·10⁻⁸ vs ffmpeg |
 
 ## Playback and memory
@@ -51,7 +53,7 @@ The playback overhead row is a 3-second tone: wall clock minus the track duratio
 
 ```bash
 python bench/run.py                 # sound_rs only
-python bench/run.py --compare       # + soundfile / sounddevice
+python bench/run.py --compare       # + soundfile / sounddevice / miniaudio / librosa / pydub when installed
 python bench/run.py --reps 9
 ```
 
@@ -59,7 +61,7 @@ The harness generates its corpus (3 s and 10 min, WAV plus MP3/FLAC/M4A when ffm
 
 ## Where it loses
 
-- **MP3 alignment**: 47 samples (~1 ms) earlier than libsndfile and ffmpeg. Length is exact; values match after alignment.
+- **MP3 alignment**: the historical run had a 47-sample offset. All MP3 paths now use Symphonia, and the committed fixture aligns with ffmpeg at lag 0; the timings above remain the 0.3.0 minimp3 measurements.
 
 - **WAV decode**: a memcpy race with libsndfile, 1.2× is all there is.
 

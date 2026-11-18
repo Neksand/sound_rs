@@ -1,44 +1,24 @@
 # Changelog
 
-## Unreleased — media validation
+## 0.5.0
 
-- Bounds-check MP4 box lengths before arithmetic and slicing.
+- `sound_rs.Decoder`: bounded-memory incremental reads with optional resampling and mono folding, iteration, `read()` and context management.
 
-- Cap metadata-driven initial decode reservations at 32 MiB; this is not a limit on total decoded audio memory.
+- `write_bytes()` encodes WAV without touching disk; `load_many( on_error="skip")` keeps batches going past corrupt files.
 
-- Validate WAV dimensions, sizes and finite samples before touching the destination; include odd PCM24 padding in RIFF size and classify write errors as `io`.
+- CLI: `soundrs info --json` and `soundrs convert`, with typed exit codes and no new dependencies.
 
-- Use checked NumPy read borrows; reject zero or overflowing channel counts.
+- AIFF, CAF and ALAC-in-M4A decoding with lossless fixtures; `pathlib.Path` is accepted wherever a file path is taken.
 
-- Reject invalid load/synthesis parameters and non-finite CLI volume. WAV encoding and disk I/O release the GIL.
+- One MP3 decoder: Symphonia replaces minimp3 for full-file, bytes, windows and streaming. The 47-sample LAME/Xing offset is gone; MP3 regression uses a sample hash. Full-file MP3 decode is about 26% slower on the 60-second benchmark (~2,000× realtime).
 
-## Unreleased — playback lifecycle
+- Continuous fed resampling with retained filter state; `end_feed()` flushes the tail. `Player.paused` reports pause state.
 
-- Drain the final written audio prefix, complete empty feeds and time out only stalled producers. Paused wait returns without discarding the queue.
+- Fail `play_file()` before replacing playback on an unreadable path; raise an error when a whole-buffer resampler cannot run; validate `record_to()` destinations before capture; reject `record()` outside 0…3600 seconds.
 
-- Preserve pause/queue across seek, track the active queued file, and reject invalid source transitions, non-finite samples/volume, incomplete frames and zero rates.
+- Linux wheels bundle the ALSA runtime; source builds need ALSA development headers. Release validation checks the bundled library instead of installing one.
 
-- Report backend failures through an atomic flag and avoid blocking on callback state contention. Keep hardware recovery and continuous feed resampling as future work.
-
-## Unreleased — bounded recording
-
-- Move capture allocation and synchronization out of the input callback into a collector behind a bounded ring; preserve the 230 M sample storage limit.
-
-- Report overflow, allocation and device faults; drain final input on shutdown and release the GIL while joining the collector.
-
-- Make the documented `record_to(..., subtype="pcm16")` default effective at runtime and include context manager methods in the type stub.
-
-## Unreleased — streaming resampler
-
-- Drain filter delay at EOF even when input ends on a full block, remove startup delay for very short tracks, and trim output padding to the exact converted frame count.
-
-- Test numerical output against a full filter pass across packet sizes, sample rates, stereo channels and impulses at the end of a track. Full-decode fixtures are unchanged.
-
-## Unreleased — Python bindings
-
-- Upgrade PyO3 to 0.29.3 and the numpy Rust crate to 0.29, removing affected PyO3 versions from two RustSec advisory ranges while preserving the Python 3.10+ stable ABI.
-
-- Explicitly retain the GIL requirement. Decoder dependencies and fixture hashes are unchanged; the separate minimp3/slice-ring-buffer advisory remains unresolved.
+- CI runs Python 3.13, tests without the default `numpy` feature, and runs `cargo audit` without ignores (192 packages, no advisories).
 
 Short history. Full notes with diffs live on [GitHub Releases](https://github.com/Neksand/sound_rs/releases).
 

@@ -43,13 +43,9 @@ jobs:
         with:
           name: wheel-${{ matrix.os }}
           path: dist/*.whl
-      - name: ALSA runtime
+      - name: Check bundled ALSA runtime
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2t64 \
-            || sudo apt-get install -y libasound2 \
-            || true  # the import check below is what actually proves it
+        run: unzip -l dist/*.whl | grep -q 'sound_rs.libs/libasound'
       - name: Validate wheel API and samples
         shell: bash
         env:

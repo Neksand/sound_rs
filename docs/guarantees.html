@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -67,8 +67,8 @@ or proof that arbitrary untrusted media is safe.</p>
 </ul>
 
 <h2 id="determinism">Determinism</h2>
-<p><code>tests/decode_regression.py</code> checks exact dimensions/rates for six fixtures,
-SHA-256 hashes of samples rounded to 10⁻⁴ for five, and an RMS tolerance for MP3. Missing
+<p><code>tests/decode_regression.py</code> checks exact dimensions/rates for nine fixtures
+and SHA-256 hashes of samples rounded to 10⁻⁴ for all of them. Missing fixtures fail.
 fixtures fail the check. These are regression bounds, not a guarantee that every sample change
 is detected or that decoder output is bit-identical across CPUs and dependency versions.</p>
 
@@ -89,10 +89,10 @@ is detected or that decoder output is bit-identical across CPUs and dependency v
 <ul>
   <li>Resampling uses rubato's FFT resampler: a 20 kHz tone downsampled to 24 kHz is filtered
       below 10% of its level instead of folding back as an alias.</li>
-  <li>Encoder-delay/padding metadata is used when available; MP3 decoder paths differ and
-      AAC can retain tail padding. See <a href="formats.html#gapless">format limits</a>.</li>
-  <li>Historical test-corpus comparisons found identical WAV/FLAC PCM, MP3 agreement within
-      1.6·10⁻⁵ after a 47-sample alignment adjustment, and AAC agreement within 8·10⁻⁸.
+  <li>Encoder-delay/padding metadata is used when available; all MP3 paths use one Symphonia
+      decoder, and AAC can retain tail padding. See <a href="formats.html#gapless">format limits</a>.</li>
+  <li>The committed MP3 fixture aligns with ffmpeg at lag 0; the historical minimp3 run had a
+      47-sample offset. WAV/FLAC PCM is identical, and AAC agrees within 8·10⁻⁸ on the fixture.
       These are fixture results, not universal codec guarantees.</li>
 </ul>
 
@@ -114,7 +114,7 @@ is detected or that decoder output is bit-identical across CPUs and dependency v
   <aside class="toc"><h2>On this page</h2><a href="#errors">Errors</a><a href="#panics">No panics on bad input</a><a href="#threads">Threads and the GIL</a><a href="#determinism">Determinism</a><a href="#memory">Memory</a><a href="#quality">Audio quality</a><a href="#not">What is not promised</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

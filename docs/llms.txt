@@ -4,14 +4,16 @@
 > without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux
 > x86_64/aarch64, Windows amd64, macOS arm64/Intel.
 
-Version 0.4.2. Install with `pip install sound_rs`. Playback waits release
+Version 0.5.0. Install with `pip install sound_rs`. Playback waits release
 the GIL; decoding returns float32 `(frames, channels)` arrays; library failures raise
 `sound_rs.SoundRsError` with a `.code` of `io`, `format`, `device`, `stalled`,
 `unsupported` or `usage`.
-Python argument conversion can raise TypeError or OverflowError. Linux wheels require
-the ALSA runtime. Full load/load_many and recording retain samples in memory.
-Create, use and destroy each Player/Recorder on the same thread. Playback waits release
-the GIL; preparation and teardown can still hold it. record_to captures in memory, then writes.
+Python argument conversion can raise TypeError or OverflowError. Linux wheels bundle
+the ALSA runtime; source builds need ALSA development headers. Full load/load_many and
+recording retain samples in memory; `Decoder` yields bounded blocks. Create, use and
+destroy each Player/Recorder on the same thread. Playback waits release the GIL;
+preparation and teardown can still hold it. record_to captures in memory, then writes.
+The `soundrs` CLI supports `info --json` and `convert` for shell and agent workflows.
 
 Reading order for a coding task: Overview, Quickstart, then the guide for the job
 (player, datasets, recording, writing, numpy, migration), then the API reference.
@@ -20,15 +22,15 @@ Skipping the guides and guessing the API is the most common way to get it wrong.
 ## Start
 
 - [Overview](https://neksand.github.io/sound_rs/index.html.md): sound_rs plays, records and decodes audio in Python, with built-in decoders, bounded playback streaming, NumPy arrays and WAV output.
-- [Installation](https://neksand.github.io/sound_rs/install.html.md): How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the Linux audio library it needs.
+- [Installation](https://neksand.github.io/sound_rs/install.html.md): How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the bundled Linux audio runtime.
 - [Quickstart](https://neksand.github.io/sound_rs/quickstart.html.md): The five things most sound_rs code does: play a file, control it, play an array, read metadata, decode to NumPy.
-- [Command line](https://neksand.github.io/sound_rs/cli.html.md): The soundrs command: play a file, inspect metadata, list output devices, and find the documentation from a terminal.
+- [Command line](https://neksand.github.io/sound_rs/cli.html.md): The soundrs command: play a file, inspect JSON metadata, convert to WAV, list output devices, and find the documentation from a terminal.
 
 ## Guides
 
 - [The player](https://neksand.github.io/sound_rs/player.html.md): The sound_rs Player: one stream kept open, playback, pause, resume, stop, seeking, thread ownership and source lifecycle.
 - [Streaming and memory](https://neksand.github.io/sound_rs/streaming.html.md): How bounded playback buffers differ from whole-file decoding, what historical memory measurements show, and when to use load().
-- [Formats and gapless](https://neksand.github.io/sound_rs/formats.html.md): Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and what the MP3 offset against libsndfile means.
+- [Formats and gapless](https://neksand.github.io/sound_rs/formats.html.md): Which formats and bit depths sound_rs decodes, how encoder delay and padding are trimmed, and how MP3 alignment now compares with libsndfile.
 - [NumPy and arrays](https://neksand.github.io/sound_rs/numpy.html.md): Array shapes, dtype rules, playing and decoding arrays with sound_rs, batch decoding, and the mistakes that cost the most time.
 - [Datasets and ML](https://neksand.github.io/sound_rs/datasets.html.md): Load audio for machine learning: one call to resample to 16 kHz mono, parallel decoding across cores, and honest memory numbers.
 - [Recording](https://neksand.github.io/sound_rs/recording.html.md): Record from a microphone with sound_rs: input devices, start/stop, fixed-length captures, macOS permissions, and writing a WAV.
@@ -38,7 +40,7 @@ Skipping the guides and guessing the API is the most common way to get it wrong.
 ## Reference
 
 - [API reference](https://neksand.github.io/sound_rs/api.html.md): Every function and method in sound_rs: signatures, arguments, return values, exceptions and a runnable example.
-- [Benchmarks](https://neksand.github.io/sound_rs/benchmarks.html.md): How sound_rs compares with libsndfile and sounddevice: methodology, full tables, and the cases where it loses.
+- [Benchmarks](https://neksand.github.io/sound_rs/benchmarks.html.md): How sound_rs compares with soundfile, sounddevice, miniaudio, librosa and pydub: methodology, full tables, and the cases where it loses.
 - [Guarantees](https://neksand.github.io/sound_rs/guarantees.html.md): sound_rs error contracts, thread ownership, regression checks, memory limits and the boundaries of device and security validation.
 - [Troubleshooting](https://neksand.github.io/sound_rs/faq.html.md): Common sound_rs problems: no sound, busy device, ALSA and PipeWire on Linux, Jupyter, asyncio, and why the first play is slower.
 - [Changelog](https://neksand.github.io/sound_rs/changelog.html.md): sound_rs release history: what changed in each version and where to find the full release notes.

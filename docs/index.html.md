@@ -1,6 +1,6 @@
 # Audio for Python, without ffmpeg.
 
-sound_rs plays and decodes the formats people actually have — MP3, FLAC, WAV, OGG, M4A — from a single wheel. The decoders are compiled in; no ffmpeg binary is required. Linux needs the ALSA runtime, and array APIs need NumPy.
+sound_rs plays and decodes the formats people actually have — MP3, FLAC, WAV, OGG, M4A/AAC/ALAC, AIFF and CAF — from a single wheel. The decoders are compiled in; no ffmpeg binary is required. Linux wheels bundle the ALSA runtime, and array APIs need NumPy.
 
 Timing and memory figures above are historical 0.3.0 measurements on one Mac, not device guarantees. See the [benchmark methodology and limits](benchmarks.html).
 

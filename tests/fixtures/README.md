@@ -24,6 +24,18 @@ ffmpeg -i tone.wav -c:a libmp3lame -b:a 128k tone.mp3
 ffmpeg -i tone.wav -c:a aac tone.m4a
 ```
 
+Format-coverage fixtures (`tests/test_formats.py`):
+
+```
+ffmpeg -y -i tone.wav -c:a pcm_s16be tone.aiff
+ffmpeg -y -i tone.wav -c:a alac tone_alac.m4a
+ffmpeg -y -i tone.wav -c:a pcm_s16be tone.caf
+```
+
+These exist so Symphonia's AIFF, CAF and ALAC decoders are exercised; they are
+format coverage, not golden hashes. All three decode bit-identically to
+`tone.wav` (checked against ffmpeg when generated).
+
 Notes:
 - `tone24.wav` holds the same signal scaled by 256, so its float32 output is
   intentionally identical to `tone.wav` — the check that 24-bit is not truncated.

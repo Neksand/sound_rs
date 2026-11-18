@@ -242,84 +242,7 @@ fn append_skipping(samples: &mut Vec<f32>, chunk: &[f32], skip: usize) -> usize 
     0
 }
 
-/// True for `.mp3`, the one format we decode with minimp3 instead of symphonia.
-fn is_mp3(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("mp3"))
-        .unwrap_or(false)
-}
-
-/// Decodes MP3 with minimp3, which is ~45% faster than symphonia's decoder on
-/// the same file. Container metadata still comes from symphonia so the gapless
-/// trimming matches the other formats.
-fn decode_mp3(path: &str) -> Result<Audio, String> {
-    use std::io::BufReader;
-
-    let info = probe_info(path)?;
-    let sample_rate = info.sample_rate.ok_or("Unknown sample rate")?;
-    let channels = info.channels.ok_or("Unknown channel layout")?.max(1);
-    let ch = channels as usize;
-    let delay = info.delay;
-    let padding = info.padding;
-    let limit = info
-        .frames
-        .map(|frames| frames.saturating_sub(delay + padding))
-        .unwrap_or(u64::MAX);
-
-    let file = File::open(path).map_err(|e| format!("Cannot open '{path}': {e}"))?;
-    let mut decoder = minimp3::Decoder::new(BufReader::new(file));
-    let mut samples = Vec::with_capacity(prealloc_capacity(
-        info.frames,
-        Some(channels),
-        Some(sample_rate),
-    ));
-    let mut skip = delay * ch as u64;
-    let mut emitted = 0u64;
-
-    loop {
-        let frame = match decoder.next_frame() {
-            Ok(frame) => frame,
-            Err(minimp3::Error::Eof) => break,
-            Err(e) => return Err(format!("Decode error: {e}")),
-        };
-        let mut chunk: Vec<f32> = frame.data.iter().map(|&s| s as f32 / 32768.0).collect();
-        if frame.channels as u16 != channels {
-            chunk = convert_channels(&chunk, frame.channels as u16, channels);
-        }
-
-        let frames = (chunk.len() / ch) as u64;
-        let dropped = skip.min(frames);
-        skip -= dropped;
-        let start = (dropped * ch as u64) as usize;
-        let mut take = frames - dropped;
-        if emitted + take > limit {
-            take = limit.saturating_sub(emitted);
-        }
-        emitted += take;
-        let end = start + take as usize * ch;
-        samples.extend_from_slice(&chunk[start.min(chunk.len())..end.min(chunk.len())]);
-    }
-
-    if samples.is_empty() {
-        return Err(format!("No audio data decoded from '{path}'"));
-    }
-
-    Ok(Audio {
-        sample_rate,
-        channels,
-        samples,
-    })
-}
-
 pub(crate) fn decode(path: &str) -> Result<Audio, String> {
-    if is_mp3(path) {
-        // Never fail a file symphonia could still read.
-        if let Ok(audio) = decode_mp3(path) {
-            return Ok(audio);
-        }
-    }
     decode_symphonia(path)
 }
 
@@ -353,7 +276,7 @@ pub(crate) fn decode_with_options(path: &str, options: LoadOptions) -> Result<Au
                 audio.sample_rate,
                 rate,
                 audio.channels as usize,
-            );
+            )?;
             audio.sample_rate = rate;
         }
     }
@@ -693,6 +616,12 @@ impl Resampler {
         self.output_frames = 0;
     }
 
+    /// False when a requested rate conversion could not be constructed. The
+    /// caller can then fail loudly instead of receiving unfiltered audio.
+    pub fn is_active(&self) -> bool {
+        self.inner.is_some()
+    }
+
     /// Drains the filter at end of stream, even when the input ended on a full
     /// chunk. Startup delay and zero-padding are not part of the real audio.
     /// Call `reset` before feeding another stream after this final drain.
@@ -782,44 +711,43 @@ impl Resampler {
 }
 
 /// Resamples a whole buffer. Uses the resampler's `process_all`, which trims
-/// the filter's startup delay so the output lines up with the input.
+/// the filter's startup delay so the output lines up with the input. A failed
+/// resampler is an error, not a silently mislabeled buffer.
 pub(crate) fn resample_all(
     samples: &[f32],
     src_rate: u32,
     dst_rate: u32,
     channels: usize,
-) -> Vec<f32> {
+) -> Result<Vec<f32>, String> {
     use rubato::Resampler as _;
 
     if src_rate == dst_rate || channels == 0 {
-        return samples.to_vec();
+        return Ok(samples.to_vec());
     }
     let frames = samples.len() / channels;
     if frames == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let mut inner = match rubato::Fft::<f32>::new(
+    let mut inner = rubato::Fft::<f32>::new(
         src_rate as usize,
         dst_rate as usize,
         RESAMPLE_CHUNK.max(frames.min(8192)),
         channels,
         rubato::FixedSync::Input,
-    ) {
-        Ok(inner) => inner,
-        Err(_) => return samples.to_vec(),
-    };
+    )
+    .map_err(|e| format!("Cannot create resampler: {e}"))?;
 
     let Ok(adapter) =
         rubato::audioadapter_buffers::direct::InterleavedSlice::new(samples, channels, frames)
     else {
-        return samples.to_vec();
+        return Err("Cannot resample: invalid interleaved buffer".to_string());
     };
 
-    match inner.process_all(&adapter, frames, None) {
-        Ok(resampled) => resampled.take_data(),
-        Err(_) => samples.to_vec(),
-    }
+    inner
+        .process_all(&adapter, frames, None)
+        .map(|resampled| resampled.take_data())
+        .map_err(|e| format!("Cannot resample: {e}"))
 }
 
 /// A file opened for incremental decoding: one packet at a time, keeping only
@@ -996,7 +924,7 @@ mod tests {
         let input: Vec<f32> = (0..48_000)
             .map(|i| ((i as f32) * 0.01).sin() * 0.5)
             .collect();
-        let out = resample_all(&input, 48_000, 44_100, 1);
+        let out = resample_all(&input, 48_000, 44_100, 1).unwrap();
         let expected = 44_100;
         assert!(
             (out.len() as i64 - expected).abs() <= 2,
@@ -1009,7 +937,7 @@ mod tests {
     #[test]
     fn resample_all_is_identity_at_same_rate() {
         let input = vec![0.1f32, 0.2, 0.3];
-        assert_eq!(resample_all(&input, 44_100, 44_100, 1), input);
+        assert_eq!(resample_all(&input, 44_100, 44_100, 1).unwrap(), input);
     }
 
     #[test]
@@ -1111,7 +1039,7 @@ mod tests {
         let input: Vec<f32> = (0..rate)
             .map(|i| (2.0 * std::f32::consts::PI * 20_000.0 * i as f32 / rate as f32).sin())
             .collect();
-        let out = resample_all(&input, rate, 24_000, 1);
+        let out = resample_all(&input, rate, 24_000, 1).unwrap();
         let rms = |samples: &[f32]| {
             (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt()
         };
@@ -1504,7 +1432,7 @@ mod property_tests {
             dst in rate_strategy(),
         ) {
             let input = vec![0.0f32; frames * channels];
-            let out = resample_all(&input, src, dst, channels);
+            let out = resample_all(&input, src, dst, channels).unwrap();
             let expected = frames as f64 * dst as f64 / src as f64;
             let actual = (out.len() / channels) as f64;
             prop_assert!(
@@ -1544,7 +1472,7 @@ mod property_tests {
             level in -1.0f32..1.0,
         ) {
             let input = vec![level; frames * channels];
-            let out = resample_all(&input, src, dst, channels);
+            let out = resample_all(&input, src, dst, channels).unwrap();
             prop_assert!(out.iter().all(|s| s.is_finite()));
 
             // A band-limited resampler rings at a hard edge (an abrupt DC step),

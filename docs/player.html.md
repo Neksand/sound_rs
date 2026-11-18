@@ -86,7 +86,7 @@ with sound_rs.Player() as player:
 
 For synthesis or a network stream, feed samples instead of a file. `feed` blocks while the buffer is full, so a fast producer cannot exhaust memory. If the buffer cannot drain for five seconds — a paused player, for example — it raises `SoundRsError` with `code="stalled"` instead of hanging.
 
-The timeout measures consecutive time without ring progress, not the duration of a `feed()` call. Long healthy feeds are supported. Closing an empty feed completes cleanly; `wait()` includes the final output drain. `end_feed()` requires a fed source; after a finished feed, call `begin_feed()` to start another.
+The timeout measures consecutive time without ring progress, not the duration of a `feed()` call. Long healthy feeds are supported. Closing an empty feed completes cleanly; `wait()` includes the final output drain. `end_feed()` also waits for ring space while it flushes the resampler tail, so resume a paused player first. `end_feed()` requires a fed source; after a finished feed, call `begin_feed()` to start another.
 
 ```
 import numpy as np

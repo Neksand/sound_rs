@@ -12,8 +12,9 @@ decoding to NumPy, and now WAV writing. No ffmpeg, no system decoders.
 | Path | Owns |
 |---|---|
 | `src/lib.rs` | module registration, most PyO3 functions, NumPy conversion, `SoundRsError` |
-| `src/audio.rs` | decoding (symphonia/minimp3), gapless trim, MP4 edit list, resampling (rubato), channel conversion |
+| `src/audio.rs` | decoding (symphonia), gapless trim, MP4 edit list, resampling (rubato), channel conversion |
 | `src/player.rs` | the persistent output stream: `Player`, queue, fed streams, underruns |
+| `src/decoder.rs` | incremental `Decoder`: fixed-size blocks, optional resampling and mono |
 | `src/recorder.rs` | input devices and `Recorder` |
 | `src/writer.rs` | WAV encoding (`write`) |
 | `src/cli.rs` | the `soundrs` command |
@@ -25,6 +26,8 @@ decoding to NumPy, and now WAV writing. No ffmpeg, no system decoders.
 
 ```bash
 cargo test                                   # unit + fuzz + properties
+cargo test --no-default-features             # no NumPy feature
+cargo audit                                  # RustSec advisories; must be clean
 cargo clippy --all-targets -- -D warnings    # must be clean
 cargo fmt --all -- --check
 maturin develop --release                    # build into the active venv
@@ -91,7 +94,8 @@ separate optional runs; never report them passed merely because a headless job p
 - cpal streams are `!Send`; `Player`/`Recorder` are `unsendable` pyclasses.
 - Container seeks land on packet boundaries; `Stream::seek` records the difference and drops
   it on the next packet. Do not "simplify" that away.
-- Full-file MP3 goes through minimp3; MP3 windows, streaming and `load_bytes` use Symphonia.
-  The paths can differ in samples/alignment. AAC bytes already read MP4 edit-list priming.
+- Full-file MP3 goes through Symphonia now; it used to use minimp3. Full-file, bytes,
+  streaming and windowed MP3 share one decoder path. The fixture aligns with ffmpeg at lag 0.
+- AAC-in-MP4 bytes read the MP4 edit list for priming, same as the file path.
 - `pub(crate)` inside `#[pymethods]` is still exposed to Python. Check the generated API,
   not just Rust visibility; keep `Player.play_samples` documented and typed.

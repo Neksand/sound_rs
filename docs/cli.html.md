@@ -12,7 +12,8 @@ sound_rs — audio for Python
 Usage
   soundrs <command> [options]
   soundrs play <file> [--device <name>] [--volume <0-4>]
-  soundrs info <file>
+  soundrs info <file> [--json]
+  soundrs convert <input> <output.wav> [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
   soundrs --version
@@ -22,7 +23,11 @@ Commands
   play     Play a file and wait until it ends.
            --device <name>   output device, see `soundrs devices`
            --volume <number> 0 to 4, default 1
-  info     Sample rate, channels and duration, read from the header only.
+  info     Sample rate, channels and duration.
+           Reads the header when complete; decodes only when duration/format info is missing.
+           --json            one line of JSON instead of the human output
+  convert  Decode any supported file and write it as WAV.
+           --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
 
@@ -36,7 +41,8 @@ Links
 | Command | What it does |
 |---|---|
 | soundrs play FILE | Plays a file and waits.  --device  picks an output device,  --volume  takes 0…4. |
-| soundrs info FILE | Sample rate, channel count and duration from the container header — no decoding. |
+| soundrs info FILE [--json] | Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing.  --json  prints one machine-readable line. |
+| soundrs convert IN OUT.wav | Decodes any supported input and writes PCM16, PCM24 or float32 WAV via  --subtype . |
 | soundrs devices | Output devices, the default marked with  * . |
 | soundrs docs | Prints the documentation URL, for scripts and  open $(soundrs docs) . |
 | soundrs --version | Version on one line, safe to parse. |
@@ -54,6 +60,12 @@ soundrs devices
 
 # what is this file before writing any code?
 soundrs info podcast.m4a
+
+# machine-readable metadata for scripts and agents
+soundrs info podcast.m4a --json
+
+# convert any supported input to WAV
+soundrs convert voice.mp3 take.wav --subtype pcm24
 ```
 
 ```text
@@ -62,6 +74,9 @@ file         podcast.m4a
 sample rate  44100 Hz
 channels     2
 duration     42:13.6 (2533.612 s)
+
+$ soundrs info podcast.m4a --json
+{"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612}
 ```
 
 ## Checking an install

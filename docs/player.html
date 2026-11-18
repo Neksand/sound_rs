@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -107,8 +107,10 @@ for five seconds — a paused player, for example — it raises
 <code>SoundRsError</code> with <code>code="stalled"</code> instead of hanging.</p>
 <p>The timeout measures consecutive time without ring progress, not the duration of a
 <code>feed()</code> call. Long healthy feeds are supported. Closing an empty feed completes
-cleanly; <code>wait()</code> includes the final output drain. <code>end_feed()</code> requires
-a fed source; after a finished feed, call <code>begin_feed()</code> to start another.</p>
+cleanly; <code>wait()</code> includes the final output drain. <code>end_feed()</code> also waits
+for ring space while it flushes the resampler tail, so resume a paused player first.
+<code>end_feed()</code> requires a fed source; after a finished feed, call
+<code>begin_feed()</code> to start another.</p>
 <pre data-lang=""><code>import numpy as np
 import sound_rs
 
@@ -118,7 +120,7 @@ for _ in range(100):
     block = (0.2 * np.sin(np.arange(4800) * 0.057)).astype(np.float32)
     player.feed(block)         # returns when the buffer has room
 player.end_feed()
-player.wait()</code></pre><div class="note"><b>Feed at the device rate for clean joins</b>Chunks are converted and resampled independently, so a non-device rate can click at chunk boundaries. Query <code>player.sample_rate</code> and feed that.</div>
+player.wait()</code></pre><div class="note"><b>Feed at the device rate to avoid conversion</b>Non-device rates are resampled with retained filter state across blocks. Query <code>player.sample_rate</code> for the device rate.</div>
 <h2 id="threading">Threading and the GIL</h2>
 <p>File decoding runs on a Rust worker. Playback waits and feed backpressure release the GIL,
 so other Python threads can run. Array conversion/resampling, metadata queries, player shutdown joins and device
@@ -147,7 +149,7 @@ Physical disconnect behavior still needs device testing on each platform.</p>
   <aside class="toc"><h2>On this page</h2><a href="#lifecycle">Lifecycle</a><a href="#controls">Controls</a><a href="#seek">Seeking</a><a href="#volume">Volume</a><a href="#position">Position and duration</a><a href="#queue">Queue</a><a href="#feed">Pushing audio from Python</a><a href="#threading">Threading and the GIL</a><a href="#devices">Device selection</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

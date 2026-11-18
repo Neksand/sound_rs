@@ -72,6 +72,17 @@ def test_failed_measured_run_invalidates_summary():
         assert benchmark.measure("decode", reps=2) is None
 
 
+def test_measure_summarises_numeric_extras():
+    runs = [
+        {"seconds": 0.1, "cpu": 0.05, "first_sound": 0.01},
+        {"seconds": 0.2, "cpu": 0.07, "first_sound": 0.03},
+    ]
+    with mock.patch.object(benchmark, "spawn", side_effect=[runs[0], *runs]):
+        stats = benchmark.measure("first_sound", reps=2)
+    assert stats["first_sound"] == 0.02, stats
+    assert abs(stats["cpu"] - 0.06) < 1e-9, stats
+
+
 def test_no_audio_skips_every_device_scenario():
     calls = []
     stats = summarise([0.01, 0.02, 0.03])

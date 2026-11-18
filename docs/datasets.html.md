@@ -42,6 +42,19 @@ audio, rate = sound_rs.load("lecture.m4a", duration=10.0, sample_rate=16000)
 audio, rate = sound_rs.load("lecture.m4a", offset=300.0, duration=30.0)
 ```
 
+## A file larger than memory
+
+```
+import sound_rs
+
+with sound_rs.Decoder("lecture.m4a", block_frames=4800,
+                       sample_rate=16000, mono=True) as decoder:
+    for block in decoder:
+        feed(block)          # (4800, 1) float32, bounded memory
+```
+
+`Decoder` keeps one container reader and resampler alive and returns `(frames, channels)` blocks. `read(n)` asks for an explicit size; iteration uses `block_frames`. The final block is shorter, and EOF returns an empty array.
+
 ## Memory
 
 | Task | Sample payload / observation |
@@ -67,6 +80,6 @@ Decoding is CPU-bound, so the ceiling is the core count. Feeding more threads th
 
 - **Training on the fly** — decode once and store the arrays; repeated decoding of the same file is wasted CPU.
 
-- **Huge corpora** — `load_many` returns everything at once. For a corpus larger than RAM, call `load` per file inside your own batching.
+- **Huge corpora** — `load_many` returns everything at once. For a corpus larger than RAM, use `Decoder` or call `load` per file inside your own batching.
 
 - **Augmentation and feature extraction** — not implemented. This library gets you clean float32 audio; the DSP belongs to your framework.

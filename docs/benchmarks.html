@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Benchmarks — sound_rs docs</title>
-<meta name="description" content="How sound_rs compares with libsndfile and sounddevice: methodology, full tables, and the cases where it loses.">
+<meta name="description" content="How sound_rs compares with soundfile, sounddevice, miniaudio, librosa and pydub: methodology, full tables, and the cases where it loses.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/benchmarks.html">
 <link rel="alternate" type="text/markdown" href="benchmarks.html.md">
 <link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Benchmarks — sound_rs docs">
-<meta property="og:description" content="How sound_rs compares with libsndfile and sounddevice: methodology, full tables, and the cases where it loses.">
+<meta property="og:description" content="How sound_rs compares with soundfile, sounddevice, miniaudio, librosa and pydub: methodology, full tables, and the cases where it loses.">
 <meta property="og:type" content="article">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/app.js" defer></script>
@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -34,6 +34,8 @@
 <p class="lead">Historical 0.3.0 measurements with the method next to them, including rows
 where the library is slower. These device measurements were not rerun during the current
 headless engineering validation and are not performance guarantees.</p>
+<p>Current local comparison (2026-11-12): soundfile, sounddevice, miniaudio, librosa and
+pydub on an Apple M5 Pro — <a href="https://github.com/Neksand/sound_rs/blob/master/bench/REPORT-2026-11-12.md">full report</a>.</p>
 
 <h2 id="method">Method</h2>
 <ul>
@@ -67,7 +69,7 @@ headless engineering validation and are not performance guarantees.</p>
   <tr><th>Format</th><th class="num">sound_rs</th><th class="num">libsndfile</th><th>PCM check</th></tr>
   <tr><td>WAV 16-bit</td><td class="num">131 / 160 ms</td><td class="num">155 ms</td><td>identical</td></tr>
   <tr><td>FLAC</td><td class="num">265 / 267 ms</td><td class="num">465 ms</td><td>identical</td></tr>
-  <tr><td>MP3</td><td class="num">241 / 249 ms</td><td class="num">268 ms</td><td>1.6·10⁻⁵, 47 samples offset</td></tr>
+  <tr><td>MP3</td><td class="num">241 / 249 ms</td><td class="num">268 ms</td><td>1.6·10⁻⁵; the historical run had a 47-sample offset</td></tr>
   <tr><td>M4A (AAC)</td><td class="num">361 / 365 ms</td><td class="num">unsupported</td><td>8·10⁻⁸ vs ffmpeg</td></tr>
 </table>
 
@@ -83,7 +85,7 @@ the device setup and lands around +180 ms.</p>
 
 <h2 id="reproduce">Reproduce it</h2>
 <pre data-lang="bash"><code>python bench/run.py                 # sound_rs only
-python bench/run.py --compare       # + soundfile / sounddevice
+python bench/run.py --compare       # + soundfile / sounddevice / miniaudio / librosa / pydub when installed
 python bench/run.py --reps 9</code></pre>
 <p>The harness generates its corpus (3 s and 10 min, WAV plus MP3/FLAC/M4A when ffmpeg is
 available), runs each measurement in a subprocess, and prints median, p95 and peak RSS. A full
@@ -91,8 +93,9 @@ run takes about three minutes on the machine above.</p>
 
 <h2 id="caveats">Where it loses</h2>
 <ul>
-  <li><strong>MP3 alignment</strong>: 47 samples (~1 ms) earlier than libsndfile and ffmpeg.
-      Length is exact; values match after alignment.</li>
+  <li><strong>MP3 alignment</strong>: the historical run had a 47-sample offset. All MP3 paths
+      now use Symphonia, and the committed fixture aligns with ffmpeg at lag 0; the timings
+      above remain the 0.3.0 minimp3 measurements.</li>
   <li><strong>WAV decode</strong>: a memcpy race with libsndfile, 1.2× is all there is.</li>
   <li><strong>AAC decode</strong> is slower than the other formats — a newer decoder with less
       tuning — though libsndfile cannot decode it at all.</li>
@@ -105,7 +108,7 @@ run takes about three minutes on the machine above.</p>
   <aside class="toc"><h2>On this page</h2><a href="#method">Method</a><a href="#scoreboard">Scoreboard</a><a href="#decode">Decode detail</a><a href="#memory">Playback and memory</a><a href="#reproduce">Reproduce it</a><a href="#caveats">Where it loses</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

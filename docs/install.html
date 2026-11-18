@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Installation — sound_rs docs</title>
-<meta name="description" content="How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the Linux audio library it needs.">
+<meta name="description" content="How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the bundled Linux audio runtime.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/install.html">
 <link rel="alternate" type="text/markdown" href="install.html.md">
 <link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Installation — sound_rs docs">
-<meta property="og:description" content="How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the Linux audio library it needs.">
+<meta property="og:description" content="How to install sound_rs: wheels for Linux, Windows and macOS, Python versions, from-source builds, and the bundled Linux audio runtime.">
 <meta property="og:type" content="article">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/app.js" defer></script>
@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -62,10 +62,13 @@ cd sound_rs
 pip install maturin
 maturin develop --release</code></pre>
 <h2 id="linux-audio">Linux audio</h2>
-<p>Playback uses ALSA through <code>cpal</code>. Most desktops already have the runtime
-library; a minimal container or server needs it explicitly:</p>
-<pre data-lang="bash"><code>sudo apt install libasound2          # Debian / Ubuntu (libasound2t64 on 24.04+)
-sudo dnf install alsa-lib            # Fedora</code></pre><div class="note"><b>The wheel links the ALSA runtime</b>If the library is missing, <code>import sound_rs</code> fails at load time, not on the first play. Install the package above. There is currently no supported playback-disabled build feature; no external audio decoder is required.</div>
+<p>Playback uses ALSA through <code>cpal</code>. The Linux wheels bundle the ALSA runtime
+library, so <code>import sound_rs</code>, decoding, metadata and <code>soundrs info</code>
+work in a slim container without installing system packages. Playback still needs an output
+device; with none, it raises <code>SoundRsError(code="device")</code>.</p>
+<p>Source builds need the ALSA development headers:</p>
+<pre data-lang="bash"><code>sudo apt install libasound2-dev      # Debian / Ubuntu
+sudo dnf install alsa-lib-devel      # Fedora</code></pre><div class="note"><b>Alpine and musl</b>musllinux wheels are not published yet. Alpine falls back to the source distribution, which needs Rust plus <code>alsa-lib-dev</code>. The wheel does not require a separate ALSA runtime install.</div>
 <h2 id="check">Check it works</h2>
 <pre data-lang=""><code>import sound_rs
 
@@ -81,7 +84,7 @@ documentation link. See <a href="cli.html">Command line</a>.</p>
   <aside class="toc"><h2>On this page</h2><a href="#requirements">Requirements</a><a href="#from-source">From source</a><a href="#linux-audio">Linux audio</a><a href="#check">Check it works</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

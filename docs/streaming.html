@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -39,8 +39,9 @@ container, decoder, resampler and process memory are additional.</p>
 <p>When the sample rate changes, the resampler removes its filter delay and drains the
 filter tail at EOF. The output contains exactly <code>ceil(input_frames * output_rate /
 input_rate)</code> frames, including tracks shorter than a processing block. Seeking resets
-the filter and frame counters. This does not make independently resampled
-<code>feed()</code> blocks continuous; use the device rate for those blocks.</p>
+the filter and frame counters. The same streaming resampler retains state across
+<code>feed()</code> blocks, and <code>end_feed()</code> flushes the tail, so a non-device feed
+rate stays continuous.</p>
 <ol>
   <li>The decoder thread reads a packet, decodes it to float32, converts the channel count
       and resamples to the device rate.</li>
@@ -99,7 +100,7 @@ clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;])</code></pre
   <aside class="toc"><h2>On this page</h2><a href="#how">How it works</a><a href="#numbers">Numbers</a><a href="#choose">play_file or load?</a><a href="#caveats">Caveats</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

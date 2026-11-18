@@ -117,7 +117,7 @@ def main():
 
         # A window must carry the same samples as the head of a full decode,
         # including the encoder delay trim for MP3/AAC.
-        for name in ("tone.wav", "tone.flac", "tone.m4a"):
+        for name in ("tone.wav", "tone.flac", "tone.m4a", "tone.mp3"):
             path = os.path.join(FIX, name)
             full, _ = sound_rs.load(path)
             head, _ = sound_rs.load(path, duration=0.1)
@@ -126,24 +126,22 @@ def main():
             diff = float(np.abs(head[:n] - full[:n]).max())
             assert diff < 1e-3, f"{name} window is misaligned by {diff}"
 
-        # MP3 windows go through symfonia's reader while a full load uses
-        # minimp3, so compare the length, not the samples.
-        mp3_head, _ = sound_rs.load(os.path.join(FIX, "tone.mp3"), duration=0.1)
-        assert abs(len(mp3_head) - 4410) <= 1, len(mp3_head)
-
         # Zero-length windows are empty arrays, not errors.
         empty, _ = sound_rs.load(stereo, duration=0.0)
         assert empty.shape == (0, 2), empty.shape
 
-        # Bytes decode must keep the gapless trim, AAC included.
-        m4a = os.path.join(FIX, "tone.m4a")
-        file_audio, _ = sound_rs.load(m4a)
-        with open(m4a, "rb") as handle:
-            bytes_audio, _ = sound_rs.load_bytes(handle.read())
-        assert file_audio.shape == bytes_audio.shape, (
-            file_audio.shape,
-            bytes_audio.shape,
-        )
+        # Bytes decode must keep the gapless trim; all MP3 paths share Symphonia.
+        for name in ("tone.m4a", "tone.mp3"):
+            path = os.path.join(FIX, name)
+            file_audio, _ = sound_rs.load(path)
+            with open(path, "rb") as handle:
+                bytes_audio, _ = sound_rs.load_bytes(handle.read())
+            assert file_audio.shape == bytes_audio.shape, (
+                name,
+                file_audio.shape,
+                bytes_audio.shape,
+            )
+            assert np.abs(file_audio - bytes_audio).max() < 1e-6, name
 
         # Writing: (frames, channels) round-trips through load().
         out = os.path.join(tmp, "written.wav")

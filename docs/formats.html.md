@@ -1,6 +1,6 @@
 # Formats and gapless
 
-Built-in WAV, FLAC, MP3, Ogg/Vorbis and AAC-in-MP4 decoding, with encoder-delay trimming where metadata is available.
+Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, ALAC, AIFF and CAF decoding, with encoder-delay trimming where metadata is available.
 
 ## Supported formats
 
@@ -8,9 +8,12 @@ Built-in WAV, FLAC, MP3, Ogg/Vorbis and AAC-in-MP4 decoding, with encoder-delay 
 |---|---|---|---|
 | WAV | .wav | symphonia | PCM, including tested 24-bit and multichannel files |
 | FLAC | .flac | symphonia | Lossless decode; supported codec layouts/rates |
-| MP3 | .mp3 | minimp3 / symphonia | Full-file load uses minimp3; bytes/windows/streaming use Symphonia |
+| MP3 | .mp3 | symphonia | One decoder path for full-file, bytes, windows and streaming |
 | OGG Vorbis | .ogg | symphonia | — |
 | AAC in MP4 | .m4a, .mp4 | symphonia | priming read from the edit list |
+| ALAC in M4A | .m4a, .mp4 | symphonia | Lossless; gapless where the container declares it |
+| AIFF | .aiff | symphonia | PCM |
+| CAF | .caf | symphonia | PCM |
 
 There is no extension allowlist. Probing recognizes containers; a successful probe does not prove that every codec or packet inside is supported. Raw AAC and other containers need dedicated validation before relying on them.
 

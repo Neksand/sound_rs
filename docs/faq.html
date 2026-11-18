@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -87,9 +87,9 @@ import sound_rs
 
 await asyncio.to_thread(sound_rs.play_audio, &quot;track.flac&quot;)</code></pre>
 <h2 id="mp3-offset">MP3 samples do not line up with another library</h2>
-<p>Different decoders trim the encoder delay slightly differently. sound_rs starts 47 samples
-(~1 ms) earlier than libsndfile and ffmpeg on LAME files; lengths match exactly. If you compare
-waveforms, align first. See <a href="formats.html#gapless">Formats and gapless</a>.</p>
+<p>All MP3 paths now use Symphonia, and the tested fixture aligns with ffmpeg at lag 0. The old
+minimp3 path had a 47-sample offset; that decoder is gone. Remaining differences depend on the
+other library's gapless handling. See <a href="formats.html#gapless">Formats and gapless</a>.</p>
 
 <h2 id="numpy">"Input must be a 1D or 2D numpy array of float32"</h2>
 <p>NumPy's maths returns float64 by default:</p>
@@ -106,7 +106,7 @@ path if a stale wheel is being picked up.</p>
   <aside class="toc"><h2>On this page</h2><a href="#no-sound">No sound</a><a href="#busy">The device is busy</a><a href="#linux">Linux: ALSA and PipeWire</a><a href="#slow-start">Why the first play is slow</a><a href="#blocking">The call blocks forever</a><a href="#jupyter">Jupyter and notebooks</a><a href="#asyncio">asyncio</a><a href="#mp3-offset">MP3 samples do not line up with another library</a><a href="#numpy">"Input must be a 1D or 2D numpy array of float32"</a><a href="#m1">Intel Macs and ARM Linux</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

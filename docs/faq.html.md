@@ -69,7 +69,7 @@ await asyncio.to_thread(sound_rs.play_audio, "track.flac")
 
 ## MP3 samples do not line up with another library
 
-Different decoders trim the encoder delay slightly differently. sound_rs starts 47 samples (~1 ms) earlier than libsndfile and ffmpeg on LAME files; lengths match exactly. If you compare waveforms, align first. See [Formats and gapless](formats.html#gapless).
+All MP3 paths now use Symphonia, and the tested fixture aligns with ffmpeg at lag 0. The old minimp3 path had a 47-sample offset; that decoder is gone. Remaining differences depend on the other library's gapless handling. See [Formats and gapless](formats.html#gapless).
 
 ## "Input must be a 1D or 2D numpy array of float32"
 

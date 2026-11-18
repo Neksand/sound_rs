@@ -371,12 +371,16 @@ impl Recorder {
     pub(crate) fn record_to(
         &mut self,
         py: Python<'_>,
-        path: &str,
+        path: std::path::PathBuf,
         seconds: f64,
         subtype: &str,
     ) -> PyResult<()> {
+        let path = crate::path_string(path)?;
+        // Validate the destination before opening the microphone: a bad
+        // extension or subtype must not cost the caller a full take.
+        crate::wav_subtype(&path, subtype)?;
         let (audio, rate) = self.record(py, seconds)?;
-        crate::write_array(path, &audio, rate, subtype)
+        crate::write_array(&path, &audio, rate, subtype)
     }
 
     /// Records for `seconds` and returns `(array, sample_rate)`.
@@ -391,7 +395,13 @@ impl Recorder {
                 "record() needs a finite number of seconds".to_string(),
             ));
         }
-        let seconds = seconds.clamp(0.0, 3600.0);
+        if !(0.0..=3600.0).contains(&seconds) {
+            return Err(error_with(
+                "usage",
+                "record() accepts 0 to 3600 seconds; use start()/stop() for longer takes"
+                    .to_string(),
+            ));
+        }
         let input = self
             .input
             .as_ref()

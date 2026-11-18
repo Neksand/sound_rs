@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.4.2</span>
+  <span class="ver">v0.5.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -81,6 +81,9 @@ sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;float32&quot;)</
 <h2 id="limits">Limits</h2>
 <ul>
   <li>Create, use and destroy the recorder on its original thread.</li>
+  <li><code>record(seconds)</code> accepts a finite value in 0…3600 seconds. Anything outside
+      raises <code>SoundRsError(code="usage")</code> instead of clamping; use
+      <code>start()</code>/<code>stop()</code> for longer takes.</li>
   <li>Capture starts when the device delivers its first buffer. Startup latency can make a
       timed take shorter than requested; the recorder does not add frames to hide it.</li>
   <li>The callback writes to a bounded input ring (normally one second, at most 4 MiB).
@@ -93,7 +96,8 @@ sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;float32&quot;)</
       faults. <code>stop()</code> drains the final callback and joins the collector with the
       GIL released.</li>
   <li><code>record_to()</code> records to memory before writing the WAV; it is not an
-      incremental disk recorder.</li>
+      incremental disk recorder. It validates the destination path and subtype before
+      capture starts, so a bad argument does not cost a failed take.</li>
   <li>No resampling, mixing or effects on input — capture is raw device audio.</li>
   <li>Playback and recording use independent streams. Simultaneous access depends on backend
       and device support; there is no shared clock or synchronization guarantee.</li>
@@ -104,7 +108,7 @@ sound_rs.write(&quot;take.wav&quot;, audio, rate, subtype=&quot;float32&quot;)</
   <aside class="toc"><h2>On this page</h2><a href="#devices">Devices</a><a href="#start-stop">start and stop</a><a href="#wav">Writing a WAV</a><a href="#save">Saving a take</a><a href="#limits">Limits</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.4.2 — MIT</span>
+  <span>sound_rs v0.5.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

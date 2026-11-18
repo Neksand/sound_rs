@@ -546,6 +546,7 @@ pub struct Player {
     generation: Arc<AtomicU64>,
     thread: Option<std::thread::JoinHandle<Result<(), String>>>,
     feed_producer: Option<rtrb::Producer<f32>>,
+    feed_resampler: Option<audio::Resampler>,
     feed_rate: u32,
 }
 
@@ -571,6 +572,7 @@ impl Player {
             generation: Arc::new(AtomicU64::new(0)),
             thread: None,
             feed_producer: None,
+            feed_resampler: None,
             feed_rate: 0,
         })
     }
@@ -592,7 +594,11 @@ impl Player {
     }
 
     /// Stream a file. Returns immediately; audio is decoded as it plays.
-    pub(crate) fn play_file(&mut self, _py: Python<'_>, path: &str) -> PyResult<()> {
+    pub(crate) fn play_file(&mut self, _py: Python<'_>, path: std::path::PathBuf) -> PyResult<()> {
+        let path = crate::path_string(path)?;
+        // Fail before stopping the current track: an unreadable or unprobeable
+        // path should not silently replace working playback with an error.
+        let duration = crate::audio::duration_seconds(&path).map_err(crate::error)?;
         self.feed_producer = None;
         self.stop();
         let generation = self
@@ -600,9 +606,8 @@ impl Player {
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
 
-        let duration = crate::audio::duration_seconds(path).ok().flatten();
         let mut core = self.lock()?;
-        core.current_path = Some(path.to_string());
+        core.current_path = Some(path.clone());
         core.duration = duration;
         // Container duration is advisory. Only the decoder knows the actual
         // number of output samples; using an estimate can truncate playback.
@@ -626,7 +631,6 @@ impl Player {
         let generation_counter = self.generation.clone();
         let rate = self.output.rate();
         let channels = self.output.channels() as u16;
-        let path = path.to_string();
         let handle = std::thread::Builder::new()
             .name("sound_rs-decode".into())
             .spawn(move || {
@@ -664,17 +668,18 @@ impl Player {
     ) -> PyResult<()> {
         validate_samples(&samples, src_channels, sample_rate)
             .map_err(|message| error_with("usage", message.into()))?;
-        self.feed_producer = None;
-        self.stop();
         let channels = self.output.channels() as u16;
         let ready = if sample_rate == self.output.rate() && src_channels == channels {
             samples
         } else {
             let folded = convert_channels(&samples, src_channels, channels);
             resample_all(&folded, sample_rate, self.output.rate(), channels as usize)
+                .map_err(|message| error_with("unsupported", message))?
         };
         let total = ready.len();
 
+        self.feed_producer = None;
+        self.stop();
         let mut core = self.lock()?;
         core.memory = Some(Arc::new(ready));
         core.consumer = None;
@@ -695,7 +700,8 @@ impl Player {
 
     /// Append a path to the queue. When the current track ends, the next one
     /// starts automatically, with its own rate and channel layout.
-    fn enqueue(&mut self, path: &str) -> PyResult<()> {
+    fn enqueue(&mut self, path: std::path::PathBuf) -> PyResult<()> {
+        let path = crate::path_string(path)?;
         if self
             .thread
             .as_ref()
@@ -707,7 +713,7 @@ impl Player {
             ));
         }
         self.lock()?
-            .enqueue(path)
+            .enqueue(&path)
             .map_err(|message| error_with("usage", message.into()))
     }
 
@@ -725,8 +731,21 @@ impl Player {
     /// Start a fed stream: samples arrive through `feed()` instead of a file.
     fn begin_feed(&mut self, sample_rate: u32) -> PyResult<()> {
         validate_sample_rate(sample_rate).map_err(|message| error_with("usage", message.into()))?;
-        self.stop();
         let channels = self.output.channels() as u16;
+        let resampler = if sample_rate != self.output.rate() {
+            let resampler =
+                audio::Resampler::new(sample_rate, self.output.rate(), channels as usize);
+            if !resampler.is_active() {
+                return Err(error_with(
+                    "unsupported",
+                    "Cannot create resampler for this feed rate".to_string(),
+                ));
+            }
+            Some(resampler)
+        } else {
+            None
+        };
+        self.stop();
         let capacity = (self.output.rate() as f64 * RING_SECONDS) as usize * channels as usize;
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(capacity);
         {
@@ -746,6 +765,7 @@ impl Player {
             core.playing = true;
         }
         self.feed_producer = Some(producer);
+        self.feed_resampler = resampler;
         self.feed_rate = sample_rate;
         Ok(())
     }
@@ -753,7 +773,6 @@ impl Player {
     /// Push samples into a fed stream. Blocks while the ring is full.
     /// Expects float32 in `(frames,)` or `(channels, frames)`.
     pub(crate) fn feed(&mut self, py: Python<'_>, array: Bound<'_, PyAny>) -> PyResult<()> {
-        let device_failed = self.lock()?.device_failed.clone();
         if self.feed_producer.is_none() {
             return Err(error_with(
                 "usage",
@@ -765,39 +784,15 @@ impl Player {
             .map_err(|message| error_with("usage", message.into()))?;
         let device_channels = self.output.channels() as u16;
         let mut ready = convert_channels(&samples, channels, device_channels);
-        if self.feed_rate != self.output.rate() {
-            ready = resample_all(
-                &ready,
-                self.feed_rate,
-                self.output.rate(),
-                device_channels as usize,
-            );
+        if let Some(resampler) = &mut self.feed_resampler {
+            ready = resampler.process(&ready);
         }
 
-        let producer = match &mut self.feed_producer {
-            Some(producer) => producer,
-            None => {
-                return Err(error_with(
-                    "usage",
-                    "Call begin_feed() before feed(), and not after stop()".to_string(),
-                ))
-            }
-        };
-
-        let result =
-            py.detach(|| feed_samples(producer, &ready, Duration::from_secs(5), &device_failed));
-        result.map_err(|message| {
-            let code = if device_failed.load(Ordering::Relaxed) {
-                "device"
-            } else {
-                "stalled"
-            };
-            error_with(code, message.to_string())
-        })
+        self.push_feed(py, &ready)
     }
 
     /// No more samples will arrive; playback finishes when the ring drains.
-    fn end_feed(&mut self) -> PyResult<()> {
+    fn end_feed(&mut self, py: Python<'_>) -> PyResult<()> {
         if self.feed_producer.is_none() {
             // Closing an already-closed feed is harmless, but closing a file
             // stream must not turn temporary decoder starvation into EOF.
@@ -809,6 +804,15 @@ impl Player {
                 "Call begin_feed() before end_feed()".to_string(),
             ));
         }
+
+        // Drain the streaming resampler's filter tail before closing the ring.
+        if let Some(mut resampler) = self.feed_resampler.take() {
+            let tail = resampler.flush();
+            if !tail.is_empty() {
+                self.push_feed(py, &tail)?;
+            }
+        }
+
         self.feed_producer = None;
         let mut core = self.lock()?;
         core.end_of_stream = true;
@@ -843,6 +847,7 @@ impl Player {
     fn stop(&mut self) {
         // Retire the decoder thread of the current track, if any.
         self.feed_producer = None;
+        self.feed_resampler = None;
         self.generation.fetch_add(1, Ordering::Relaxed);
         if let Some(handle) = self.thread.take() {
             let _ = handle.join();
@@ -896,6 +901,11 @@ impl Player {
     #[getter]
     fn is_playing(&self) -> PyResult<bool> {
         Ok(self.lock()?.is_playing())
+    }
+
+    #[getter]
+    fn paused(&self) -> PyResult<bool> {
+        Ok(self.lock()?.paused)
     }
 
     /// Callbacks that found the buffer empty while the source was still
@@ -964,6 +974,29 @@ impl Drop for Player {
 }
 
 impl Player {
+    fn push_feed(&mut self, py: Python<'_>, samples: &[f32]) -> PyResult<()> {
+        let device_failed = self.lock()?.device_failed.clone();
+        let producer = match &mut self.feed_producer {
+            Some(producer) => producer,
+            None => {
+                return Err(error_with(
+                    "usage",
+                    "Call begin_feed() before feed(), and not after stop()".to_string(),
+                ))
+            }
+        };
+        let result =
+            py.detach(|| feed_samples(producer, samples, Duration::from_secs(5), &device_failed));
+        result.map_err(|message| {
+            let code = if device_failed.load(Ordering::Relaxed) {
+                "device"
+            } else {
+                "stalled"
+            };
+            error_with(code, message.to_string())
+        })
+    }
+
     fn lock(&self) -> PyResult<std::sync::MutexGuard<'_, Core>> {
         let core = self
             .core
@@ -1701,6 +1734,23 @@ mod tests {
         assert!(out.iter().all(|&s| s == 0.0));
         assert_eq!(core.position, 0);
     }
+
+    #[test]
+    fn paused_state_tracks_pause_and_resume() {
+        let mut core = Core::new(1, 48_000);
+        core.memory = Some(Arc::new(vec![0.0; 8]));
+        core.total = Some(8);
+        core.playing = true;
+
+        core.pause();
+        assert!(core.paused);
+        assert!(!core.is_playing());
+
+        core.resume().unwrap();
+        assert!(!core.paused);
+        assert!(core.is_playing());
+    }
+
     #[test]
     fn decoder_respects_a_pause_after_the_final_callback() {
         let path_a =

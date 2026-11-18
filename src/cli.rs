@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 
 use crate::audio;
 use crate::player::Player;
+use crate::writer;
 
 pub(crate) const DOCS: &str = "https://neksand.github.io/sound_rs/";
 const SOURCE: &str = "https://github.com/Neksand/sound_rs";
@@ -19,7 +20,8 @@ sound_rs — audio for Python
 Usage
   soundrs <command> [options]
   soundrs play <file> [--device <name>] [--volume <0-4>]
-  soundrs info <file>
+  soundrs info <file> [--json]
+  soundrs convert <input> <output.wav> [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
   soundrs --version
@@ -29,7 +31,11 @@ Commands
   play     Play a file and wait until it ends.
            --device <name>   output device, see `soundrs devices`
            --volume <number> 0 to 4, default 1
-  info     Sample rate, channels and duration, read from the header only.
+  info     Sample rate, channels and duration.
+           Reads the header when complete; decodes only when duration/format info is missing.
+           --json            one line of JSON instead of the human output
+  convert  Decode any supported file and write it as WAV.
+           --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
 
@@ -44,7 +50,15 @@ pub(crate) enum Command {
     Version,
     Docs,
     Devices,
-    Info(String),
+    Info {
+        path: String,
+        json: bool,
+    },
+    Convert {
+        input: String,
+        output: String,
+        subtype: writer::Subtype,
+    },
     Play {
         path: String,
         device: Option<String>,
@@ -63,10 +77,52 @@ pub(crate) fn parse(args: &[String]) -> Command {
         "-V" | "--version" | "version" => Command::Version,
         "docs" => Command::Docs,
         "devices" => Command::Devices,
-        "info" => match args.get(1) {
-            Some(path) => Command::Info(path.clone()),
-            None => Command::Fail("info needs a file path".to_string()),
-        },
+        "info" => {
+            let Some(path) = args.get(1).filter(|p| !p.starts_with("--")) else {
+                return Command::Fail("info needs a file path".to_string());
+            };
+            let mut json = false;
+            for arg in &args[2..] {
+                match arg.as_str() {
+                    "--json" => json = true,
+                    other => return Command::Fail(format!("unknown option '{other}'")),
+                }
+            }
+            Command::Info {
+                path: path.clone(),
+                json,
+            }
+        }
+        "convert" => {
+            let Some(input) = args.get(1).filter(|p| !p.starts_with("--")) else {
+                return Command::Fail("convert needs an input and an output path".to_string());
+            };
+            let Some(output) = args.get(2).filter(|p| !p.starts_with("--")) else {
+                return Command::Fail("convert needs an input and an output path".to_string());
+            };
+            let mut subtype = writer::Subtype::Pcm16;
+            let mut index = 3;
+            while index < args.len() {
+                match args[index].as_str() {
+                    "--subtype" => match args.get(index + 1) {
+                        Some(name) => match writer::Subtype::parse(Some(name)) {
+                            Ok(parsed) => {
+                                subtype = parsed;
+                                index += 2;
+                            }
+                            Err(message) => return Command::Fail(message),
+                        },
+                        None => return Command::Fail("--subtype needs a value".to_string()),
+                    },
+                    other => return Command::Fail(format!("unknown option '{other}'")),
+                }
+            }
+            Command::Convert {
+                input: input.clone(),
+                output: output.clone(),
+                subtype,
+            }
+        }
         "play" => {
             let Some(path) = args.get(1).filter(|p| !p.starts_with("--")) else {
                 return Command::Fail("play needs a file path".to_string());
@@ -143,13 +199,39 @@ fn run(py: Python<'_>, command: Command) -> i32 {
             }
             Err(message) => fail(message),
         },
-        Command::Info(path) => match py.detach(|| audio::info_or_decode(&path)) {
+        Command::Info { path, json } => match py.detach(|| audio::info_or_decode(&path)) {
             Ok((rate, channels, seconds)) => {
-                println!("file         {path}");
-                println!("sample rate  {rate} Hz");
-                println!("channels     {channels}");
-                println!("duration     {} ({seconds:.3} s)", clock(seconds));
+                if json {
+                    println!("{}", info_json(&path, rate, channels, seconds));
+                } else {
+                    println!("file         {path}");
+                    println!("sample rate  {rate} Hz");
+                    println!("channels     {channels}");
+                    println!("duration     {} ({seconds:.3} s)", clock(seconds));
+                }
                 0
+            }
+            Err(message) => fail(message),
+        },
+        Command::Convert {
+            input,
+            output,
+            subtype,
+        } => match py.detach(|| audio::decode(&input)) {
+            Ok(samples) => {
+                let write = py.detach(|| {
+                    writer::write(
+                        &output,
+                        &samples.samples,
+                        samples.channels,
+                        samples.sample_rate,
+                        subtype,
+                    )
+                });
+                match write {
+                    Ok(()) => 0,
+                    Err(err) => fail(err.to_string()),
+                }
             }
             Err(message) => fail(message),
         },
@@ -165,7 +247,7 @@ fn run(py: Python<'_>, command: Command) -> i32 {
             if let Err(err) = player.set_volume(volume) {
                 return fail(err.to_string());
             }
-            if let Err(err) = player.play_file(py, &path) {
+            if let Err(err) = player.play_file(py, path.into()) {
                 return fail(err.to_string());
             }
             match player.wait(py) {
@@ -184,6 +266,34 @@ fn run(py: Python<'_>, command: Command) -> i32 {
 fn fail(message: String) -> i32 {
     eprintln!("soundrs: {message}");
     1
+}
+
+/// One JSON line for `info --json`: hand-rolled so the CLI needs no serde.
+fn info_json(path: &str, rate: u32, channels: u16, seconds: f32) -> String {
+    // A non-finite duration would make the line invalid JSON.
+    let seconds = if seconds.is_finite() { seconds } else { 0.0 };
+    format!(
+        "{{\"file\":{},\"sample_rate\":{rate},\"channels\":{channels},\"duration_seconds\":{seconds}}}",
+        json_string(path)
+    )
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// 213.4 seconds -> "3:33.4".
@@ -263,6 +373,88 @@ mod tests {
                 other => panic!("{bad:?} parsed as {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn info_parses_optional_json() {
+        assert_eq!(
+            parse(&args(&["info", "a.flac"])),
+            Command::Info {
+                path: "a.flac".to_string(),
+                json: false
+            }
+        );
+        assert_eq!(
+            parse(&args(&["info", "a.flac", "--json"])),
+            Command::Info {
+                path: "a.flac".to_string(),
+                json: true
+            }
+        );
+    }
+
+    #[test]
+    fn convert_parses_subtype() {
+        assert_eq!(
+            parse(&args(&["convert", "a.flac", "b.wav"])),
+            Command::Convert {
+                input: "a.flac".to_string(),
+                output: "b.wav".to_string(),
+                subtype: writer::Subtype::Pcm16
+            }
+        );
+        assert_eq!(
+            parse(&args(&[
+                "convert",
+                "a.flac",
+                "b.wav",
+                "--subtype",
+                "float32"
+            ])),
+            Command::Convert {
+                input: "a.flac".to_string(),
+                output: "b.wav".to_string(),
+                subtype: writer::Subtype::Float32
+            }
+        );
+    }
+
+    #[test]
+    fn info_and_convert_reject_bad_arguments() {
+        for bad in [
+            args(&["info"]),
+            args(&["info", "a.flac", "--json", "--nope"]),
+            args(&["convert"]),
+            args(&["convert", "a.flac"]),
+            args(&["convert", "a.flac", "b.wav", "--subtype"]),
+            args(&["convert", "a.flac", "b.wav", "--subtype", "mp3"]),
+            args(&["convert", "a.flac", "b.wav", "--nope"]),
+        ] {
+            match parse(&bad) {
+                Command::Fail(message) => assert!(!message.is_empty()),
+                other => panic!("{bad:?} parsed as {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn json_escapes_quotes_backslashes_and_controls() {
+        assert_eq!(json_string("a\"b\\c"), r#""a\"b\\c""#);
+        assert_eq!(json_string("a\nb\tc"), r#""a\nb\tc""#);
+        assert_eq!(json_string("a\u{1}b"), r#""a\u0001b""#);
+        assert!(!json_string("a\nb").contains('\n'));
+    }
+
+    #[test]
+    fn info_json_is_one_line_with_numeric_values() {
+        assert_eq!(
+            info_json("a.flac", 48_000, 2, 1.5),
+            r#"{"file":"a.flac","sample_rate":48000,"channels":2,"duration_seconds":1.5}"#
+        );
+        assert_eq!(
+            info_json("x\".wav", 44_100, 1, f32::NAN),
+            r#"{"file":"x\".wav","sample_rate":44100,"channels":1,"duration_seconds":0}"#
+        );
     }
 
     #[test]
