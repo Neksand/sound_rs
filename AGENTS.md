@@ -65,8 +65,9 @@ separate optional runs; never report them passed merely because a headless job p
    on the same thread; sequential access from another thread is also invalid.
 5. **Arrays are float32.** `load`/`write` use `(frames, channels)`; `play_array` takes
    `(channels, frames)`. Do not silently accept float64.
-6. **Preserve decode regressions.** Five fixtures compare PCM hashes rounded to 1e-4;
-   MP3 checks dimensions/rate and RMS tolerance. These checks do not detect every sample
+6. **Preserve decode regressions.** Fifteen fixtures compare dimensions/rates; lossless and
+   MP3 fixtures use PCM hashes rounded to 1e-4, Opus uses an RMS tolerance because decoder
+   output can vary a few LSB across CPUs. These checks do not detect every sample
    change or prove cross-CPU identity. Verify against ffmpeg before updating expectations.
 7. **Gate:** nothing is pushed, tagged, published or deployed without the maintainer's
    explicit approval after seeing the report.

@@ -67,8 +67,9 @@ or proof that arbitrary untrusted media is safe.</p>
 </ul>
 
 <h2 id="determinism">Determinism</h2>
-<p><code>tests/decode_regression.py</code> checks exact dimensions/rates for nine fixtures
-and SHA-256 hashes of samples rounded to 10⁻⁴ for all of them. Missing fixtures fail.
+<p><code>tests/decode_regression.py</code> checks exact dimensions/rates for fifteen fixtures,
+SHA-256 hashes of rounded samples for the lossless and MP3 fixtures, and an RMS tolerance for
+Opus (decoder output can move by a few LSB between CPU architectures). Missing fixtures fail.
 fixtures fail the check. These are regression bounds, not a guarantee that every sample change
 is detected or that decoder output is bit-identical across CPUs and dependency versions.</p>
 

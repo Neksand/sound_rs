@@ -31,7 +31,7 @@ The contract is to report malformed input without a panic crossing the Python bo
 
 ## Determinism
 
-`tests/decode_regression.py` checks exact dimensions/rates for nine fixtures and SHA-256 hashes of samples rounded to 10⁻⁴ for all of them. Missing fixtures fail. fixtures fail the check. These are regression bounds, not a guarantee that every sample change is detected or that decoder output is bit-identical across CPUs and dependency versions.
+`tests/decode_regression.py` checks exact dimensions/rates for fifteen fixtures, SHA-256 hashes of rounded samples for the lossless and MP3 fixtures, and an RMS tolerance for Opus (decoder output can move by a few LSB between CPU architectures). Missing fixtures fail. fixtures fail the check. These are regression bounds, not a guarantee that every sample change is detected or that decoder output is bit-identical across CPUs and dependency versions.
 
 ## Memory
 

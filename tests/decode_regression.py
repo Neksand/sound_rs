@@ -21,6 +21,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "fixtures")
 
 # (frames, channels, rate, sha256 of the rounded float32 PCM)
+OPUS_RMS = {
+    "tone_opus_mono.opus": 0.227725,
+    "tone_opus_stereo.opus": 0.203967,
+    "tone_opus_mono.webm": 0.227215,
+    "tone_opus_stereo.webm": 0.203510,
+    "tone_opus_51.opus": 0.154318,
+    "speech_opus_mono.opus": 0.087286,
+}
+
 EXPECTED = {
     "tone.wav": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
     "tone24.wav": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
@@ -28,12 +37,14 @@ EXPECTED = {
     "tone.flac": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
     "tone.aiff": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
     "tone.caf": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
-    "tone_opus_mono.opus": (144000, 1, 48000, 'ae1e833631793b4a683783d23e2768c3baf3d9452046c997660815b9ab91df61'),
-    "tone_opus_stereo.opus": (144000, 2, 48000, '9f458862625f8f187242def39eac2eee0a7eef9abc085e43a47a40d4e44ba4bb'),
-    "tone_opus_mono.webm": (144648, 1, 48000, '878db9cacd212454cda22f948d4954b994eb97d4d648fe729a9699599649d535'),
-    "tone_opus_stereo.webm": (144648, 2, 48000, 'e4575d8e25d7827d8a090df49e5d8b37b0e17f834934cb79ab69b90eb204cfdd'),
-    "tone_opus_51.opus": (144000, 6, 48000, 'fed9e889ae05b8157aeab68a0ce4848225207ad613ee228d326a679107018182'),
-    "speech_opus_mono.opus": (144000, 1, 48000, '7100d4159bcbe0e0c57b5efd856b36ffb3195a4a099ceada9c0fb6a7f68c4095'),
+    # Opus output can move by a few LSB between CPU architectures; check
+    # length and RMS instead of a byte hash.
+    "tone_opus_mono.opus": (144000, 1, 48000, None),
+    "tone_opus_stereo.opus": (144000, 2, 48000, None),
+    "tone_opus_mono.webm": (144648, 1, 48000, None),
+    "tone_opus_stereo.webm": (144648, 2, 48000, None),
+    "tone_opus_51.opus": (144000, 6, 48000, None),
+    "speech_opus_mono.opus": (144000, 1, 48000, None),
     "tone_alac.m4a": (11025, 2, 44100, '93c7836cdfc70fc3791483df33fa00f11827cdba6f4afc24babd52055ad7a681'),
     "tone.mp3": (11025, 2, 44100, '8bae1432bbd7faa87e45f647fe32357d9a014d2020cb8882376e68376b644851'),
     "tone.m4a": (11264, 2, 44100, '571871df7735a715dd907c602e72e4d1398b35304d8a270c139d2cb3132a792c'),
@@ -60,6 +71,11 @@ def main(argv=None, fixtures=FIXTURES):
         frames, channels, rate, sha = digest(path)
         want_frames, want_channels, want_rate, want_sha = EXPECTED[name]
         matching = update or sha == want_sha
+        if want_sha is None and not update:
+            audio, _ = sound_rs.load(path)
+            rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
+            matching = abs(rms - OPUS_RMS[name]) < 1e-3
+            sha = f"rms {rms:.6f}"
         ok = (frames, channels, rate) == (want_frames, want_channels, want_rate) and matching
         status = "ok" if ok else "MISMATCH"
         print(f"{name:<14} {frames:6d} frames  {channels} ch  {rate} Hz  {sha[:16]}…  {status}")
