@@ -1,6 +1,6 @@
 # Formats and gapless
 
-Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, ALAC, AIFF and CAF decoding, with encoder-delay trimming where metadata is available.
+Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, Opus, ALAC, AIFF and CAF decoding, with encoder-delay trimming where metadata is available.
 
 ## Supported formats
 
@@ -14,6 +14,8 @@ Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, ALAC, AIFF and CAF decoding, wi
 | ALAC in M4A | .m4a, .mp4 | symphonia | Lossless; gapless where the container declares it |
 | AIFF | .aiff | symphonia | PCM |
 | CAF | .caf | symphonia | PCM |
+| Opus in Ogg | .opus, .ogg | symphonia-opus | 48 kHz, 1–8 channels; Ogg pre-skip trimmed |
+| Opus in WebM | .webm, .mkv | symphonia-opus | 48 kHz, 1–8 channels; one packet of tail padding may remain |
 
 There is no extension allowlist. Probing recognizes containers; a successful probe does not prove that every codec or packet inside is supported. Raw AAC and other containers need dedicated validation before relying on them.
 
@@ -24,6 +26,8 @@ Lossy encoders add silence at both ends — a few thousand samples that are not 
 - **MP3 and OGG** declare the delay and padding in the container.
 
 - **AAC in MP4** records the priming in an edit list that symphonia parses but does not expose, so the library reads the `elst` box itself.
+
+- **Opus in Ogg** trims the pre-skip from `OpusHead`. WebM/MKV does not expose the final packet padding, so the WebM path can retain up to one Opus packet (about 13.5 ms at 48 kHz) of tail audio.
 
 Historical comparison: a 60-second AAC file decoded to 2 646 016 frames and agreed with ffmpeg to 8·10⁻⁸. AAC can retain less than one codec frame of tail padding; these measurements do not guarantee exact alignment for every file.
 

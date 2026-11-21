@@ -56,7 +56,7 @@ class ValidationTests(unittest.TestCase):
         )
         self.assertEqual((info["sample_rate"], info["channels"]), (44100, 2))
         self.assertGreater(info["duration_seconds"], 0)
-        self.assertEqual(info["codec"], "pcm")
+        self.assertEqual(info["codec"], "pcm_s16le")
         self.assertEqual(info["bit_depth"], 16)
 
     def test_invalid_write_preserves_existing_file(self):

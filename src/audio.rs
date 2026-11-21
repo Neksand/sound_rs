@@ -2,13 +2,64 @@
 
 use std::fs::File;
 use std::path::Path;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use std::sync::OnceLock;
+use symphonia::core::codecs::audio::well_known::{CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_VORBIS};
+use symphonia::core::codecs::audio::{
+    AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
+};
+use symphonia::core::codecs::registry::CodecRegistry;
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::common::Tier;
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekTo};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use symphonia::core::units::Timestamp;
+
+/// Every codec symphonia ships plus the pure-Rust Opus decoder. Built once:
+/// `symphonia::default::get_codecs()` is immutable, and registering Opus needs
+/// a registry we own.
+fn codec_registry() -> &'static CodecRegistry {
+    static REGISTRY: OnceLock<CodecRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        registry.register_audio_decoder_at_tier::<symphonia_opus::OpusDecoder>(Tier::Standard);
+        registry
+    })
+}
+
+fn audio_params(track: &Track) -> Result<&AudioCodecParameters, String> {
+    track
+        .codec_params
+        .as_ref()
+        .and_then(CodecParameters::audio)
+        .ok_or_else(|| "No audio codec parameters".to_string())
+}
+
+fn codec_name(codec: AudioCodecId) -> String {
+    codec_registry()
+        .get_audio_decoder(codec)
+        .map(|d| d.codec.info.short_name.to_string())
+        .unwrap_or_else(|| format!("{codec:?}").to_ascii_lowercase())
+}
+
+/// Symphonia 0.6's MP3 and Vorbis decoders apply the container's per-packet
+/// trims themselves. Skipping the encoder delay again would cut real audio.
+fn trims_in_decoder(codec: AudioCodecId) -> bool {
+    codec == CODEC_ID_MP3 || codec == CODEC_ID_VORBIS
+}
+
+/// Opus pre-skip, in 48 kHz frames, from the `OpusHead` extra data. WebM does
+/// not publish it as `Track.delay` the way Ogg does.
+fn opus_pre_skip(params: &AudioCodecParameters) -> Option<u32> {
+    let data = params.extra_data.as_deref()?;
+    if data.len() < 12 || &data[..8] != b"OpusHead" {
+        return None;
+    }
+    Some(u32::from(u16::from_le_bytes([data[10], data[11]])))
+}
 
 pub(crate) struct Audio {
     pub sample_rate: u32,
@@ -31,13 +82,12 @@ pub(crate) fn open(path: &str) -> Result<Box<dyn FormatReader>, String> {
         hint.with_extension(ext);
     }
     symphonia::default::get_probe()
-        .format(
+        .probe(
             &hint,
             MediaSourceStream::new(Box::new(file), Default::default()),
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
-        .map(|probed| probed.format)
         .map_err(|e| format!("Unsupported or corrupt audio file '{path}': {e}"))
 }
 
@@ -46,42 +96,50 @@ pub(crate) struct TrackInfo {
     sample_rate: Option<u32>,
     channels: Option<u16>,
     frames: Option<u64>,
-    delay: u64,
-    padding: u64,
     codec: Option<String>,
     bit_depth: Option<u32>,
 }
 
 pub(crate) fn probe_info(path: &str) -> Result<TrackInfo, String> {
     let format = open(path)?;
-    let track = format.default_track().ok_or("No audio track found")?;
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or("No audio track found")?;
+    let params = audio_params(track)?;
+    let delay = if trims_in_decoder(params.codec) {
+        0
+    } else {
+        track
+            .delay
+            .or_else(|| {
+                (params.codec == CODEC_ID_OPUS)
+                    .then(|| opus_pre_skip(params))
+                    .flatten()
+            })
+            .or_else(|| {
+                if is_mp4(path) {
+                    mp4_priming(path).map(|f| f.min(u32::MAX as u64) as u32)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+    };
+    // 0.6 reports the playable count, except Ogg, which still counts the delay.
+    let frames = track
+        .num_frames
+        .map(|frames| frames.saturating_sub(delay as u64));
     Ok(TrackInfo {
-        sample_rate: track.codec_params.sample_rate,
-        channels: track.codec_params.channels.map(|c| c.count() as u16),
-        frames: track.codec_params.n_frames,
-        delay: priming_frames(path, track.codec_params.delay).unwrap_or(0) as u64,
-        padding: track.codec_params.padding.unwrap_or(0) as u64,
-        codec: Some(codec_name(track.codec_params.codec)),
-        bit_depth: track.codec_params.bits_per_sample,
+        sample_rate: params.sample_rate,
+        channels: params.channels.as_ref().map(|c| c.count() as u16),
+        frames,
+        codec: Some(codec_name(params.codec)),
+        bit_depth: if params.codec == CODEC_ID_OPUS {
+            None
+        } else {
+            params.bits_per_sample
+        },
     })
-}
-
-fn codec_name(codec: symphonia::core::codecs::CodecType) -> String {
-    let raw = codec.to_string();
-    let value = u32::from_str_radix(raw.trim_start_matches("0x"), 16).unwrap_or(0);
-    match value {
-        0x100..=0x11b => "pcm",
-        0x1000 => "vorbis",
-        0x1001 => "mp1",
-        0x1002 => "mp2",
-        0x1003 => "mp3",
-        0x1004 => "aac",
-        0x1005 => "opus",
-        0x2000 => "flac",
-        0x2003 => "alac",
-        _ => "unknown",
-    }
-    .to_string()
 }
 
 /// Lightweight metadata for `probe()`. Unlike `get_audio_info`, this reports
@@ -105,9 +163,7 @@ pub(crate) fn details(path: &str) -> Result<Details, String> {
     }
     let rate = rate.ok_or("Unknown sample rate")?;
     let channels = channels.ok_or("Unknown channel layout")?;
-    let frames = info
-        .frames
-        .map(|frames| frames.saturating_sub(info.delay.saturating_add(info.padding)));
+    let frames = info.frames;
     Ok(Details {
         sample_rate: rate,
         channels,
@@ -387,15 +443,15 @@ fn decode_range(path: &str, offset: f64, duration: Option<f64>) -> Result<Audio,
 pub(crate) fn decode_bytes(data: &[u8]) -> Result<Audio, String> {
     let reader = Box::new(std::io::Cursor::new(data.to_vec()));
     let mss = MediaSourceStream::new(reader, Default::default());
-    let probed = symphonia::default::get_probe()
-        .format(
+    let format = symphonia::default::get_probe()
+        .probe(
             &Hint::new(),
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(|e| format!("Unsupported or corrupt audio data: {e}"))?;
-    decode_format(probed.format, mp4_priming_bytes(data), "audio data")
+    decode_format(format, mp4_priming_bytes(data), "audio data")
 }
 
 fn decode_symphonia(path: &str) -> Result<Audio, String> {
@@ -417,17 +473,35 @@ fn decode_format(
 ) -> Result<Audio, String> {
     // Codec params are not always complete (AAC in MP4 has no channel layout
     // in the container), so fall back to the first decoded frame's spec.
-    let (mut sample_rate, mut channels, n_frames, mut delay, padding, mut decoder) = {
-        let track = format.default_track().ok_or("No audio track found")?;
-        let decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
+    let (
+        mut sample_rate,
+        mut channels,
+        n_frames,
+        mut delay,
+        mut padding,
+        codec,
+        pre_skip,
+        mut decoder,
+    ) = {
+        let track = format
+            .default_track(TrackType::Audio)
+            .ok_or("No audio track found")?;
+        let params = audio_params(track)?;
+        let decoder = codec_registry()
+            .make_audio_decoder(params, &AudioDecoderOptions::default())
             .map_err(|e| format!("Unsupported codec: {e}"))?;
         (
-            track.codec_params.sample_rate,
-            track.codec_params.channels.map(|c| c.count() as u16),
-            track.codec_params.n_frames,
-            track.codec_params.delay,
-            track.codec_params.padding,
+            params.sample_rate,
+            params.channels.as_ref().map(|c| c.count() as u16),
+            track.num_frames,
+            track.delay,
+            track.padding,
+            params.codec,
+            if params.codec == CODEC_ID_OPUS {
+                opus_pre_skip(params)
+            } else {
+                None
+            },
             decoder,
         )
     };
@@ -435,9 +509,16 @@ fn decode_format(
     // One allocation for the whole file instead of repeated Vec growth.
     // MP3/OGG declare the delay; AAC in MP4 only records it in the edit list.
     delay = delay.or_else(|| priming.map(|frames| frames.min(u32::MAX as u64) as u32));
+    // Opus in WebM keeps the pre-skip in OpusHead instead of Track.delay.
+    delay = delay.or(pre_skip);
+    // Symphonia 0.6's MP3/Vorbis decoders already drop delay and padding.
+    if trims_in_decoder(codec) {
+        delay = None;
+        padding = None;
+    }
 
     let mut samples = Vec::with_capacity(prealloc_capacity(n_frames, channels, sample_rate));
-    let mut buffer: Option<SampleBuffer<f32>> = None;
+    let mut packet_samples: Vec<f32> = Vec::new();
     // Samples still owed to the encoder delay. Resolved once the channel count
     // is known: AAC has no channel layout in the container until the first
     // packet is decoded, and the skip is per channel.
@@ -445,7 +526,8 @@ fn decode_format(
 
     loop {
         let packet = match format.next_packet() {
-            Ok(packet) => packet,
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
             Err(SymphoniaError::IoError(e)) => {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
                     break;
@@ -469,26 +551,16 @@ fn decode_format(
         };
 
         if channels.is_none() || sample_rate.is_none() {
-            channels.get_or_insert(decoded.spec().channels.count() as u16);
-            sample_rate.get_or_insert(decoded.spec().rate);
+            channels.get_or_insert(decoded.spec().channels().count() as u16);
+            sample_rate.get_or_insert(decoded.spec().rate());
         }
 
-        // SampleBuffer does the integer/24-bit/f64 -> f32 conversion and the
-        // interleaving for us, for every sample format symphonia can produce.
-        let needs_new_buffer = buffer
-            .as_ref()
-            .is_none_or(|b| b.capacity() < decoded.capacity());
-        if needs_new_buffer {
-            buffer = Some(SampleBuffer::<f32>::new(
-                decoded.capacity() as u64,
-                *decoded.spec(),
-            ));
-        }
-        let buffer = buffer.as_mut().expect("buffer was just created");
-        buffer.copy_interleaved_ref(decoded);
+        // Symphonia 0.6 converts every sample format to f32 and interleaves
+        // while copying; the buffer is reused for every packet.
+        decoded.copy_to_vec_interleaved::<f32>(&mut packet_samples);
         let owed = *leading_skip
             .get_or_insert_with(|| delay.unwrap_or(0) as usize * channels.unwrap_or(0) as usize);
-        leading_skip = Some(append_skipping(&mut samples, buffer.samples(), owed));
+        leading_skip = Some(append_skipping(&mut samples, &packet_samples, owed));
     }
 
     if samples.is_empty() {
@@ -553,38 +625,36 @@ pub(crate) fn convert_channels(samples: &[f32], src: u16, dst: u16) -> Vec<f32> 
 fn sniff_spec(path: &str) -> Result<(u32, u16), String> {
     let mut format = open(path)?;
     let (mut decoder, mut channel_hint) = {
-        let track = format.default_track().ok_or("No audio track found")?;
-        let decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
+        let track = format
+            .default_track(TrackType::Audio)
+            .ok_or("No audio track found")?;
+        let params = audio_params(track)?;
+        let decoder = codec_registry()
+            .make_audio_decoder(params, &AudioDecoderOptions::default())
             .map_err(|e| format!("Unsupported codec: {e}"))?;
-        (
-            decoder,
-            track.codec_params.channels.map(|c| c.count() as u16),
-        )
+        (decoder, params.channels.as_ref().map(|c| c.count() as u16))
     };
     let packet = format
         .next_packet()
-        .map_err(|e| format!("Read error: {e}"))?;
+        .map_err(|e| format!("Read error: {e}"))?
+        .ok_or("No audio packet")?;
     let decoded = decoder
         .decode(&packet)
         .map_err(|e| format!("Decode error: {e}"))?;
     let channels = channel_hint
-        .get_or_insert(decoded.spec().channels.count() as u16)
+        .get_or_insert(decoded.spec().channels().count() as u16)
         .to_owned();
     if channels == 0 {
         return Err("Unknown channel layout".to_string());
     }
-    Ok((decoded.spec().rate, channels))
+    Ok((decoded.spec().rate(), channels))
 }
 
 /// Track length in seconds from the header, without decoding.
 pub(crate) fn duration_seconds(path: &str) -> Result<Option<f64>, String> {
     let info = probe_info(path)?;
     match (info.sample_rate, info.frames) {
-        (Some(rate), Some(frames)) => {
-            let frames = frames.saturating_sub(info.delay + info.padding);
-            Ok(Some(frames as f64 / rate as f64))
-        }
+        (Some(rate), Some(frames)) => Ok(Some(frames as f64 / rate as f64)),
         _ => Ok(None),
     }
 }
@@ -600,7 +670,6 @@ pub(crate) fn info_or_decode(path: &str) -> Result<(u32, u16, f32), String> {
     }
 
     if let (Some(rate), Some(channels), Some(frames)) = (rate, channels, info.frames) {
-        let frames = frames.saturating_sub(info.delay + info.padding);
         return Ok((rate, channels, frames as f32 / rate as f32));
     }
 
@@ -810,8 +879,8 @@ pub(crate) fn resample_all(
 /// the decoder state, never the whole file.
 pub(crate) struct Stream {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn symphonia::core::codecs::Decoder>,
-    buffer: Option<SampleBuffer<f32>>,
+    decoder: Box<dyn AudioDecoder>,
+    packet_samples: Vec<f32>,
     trim_frames: Option<u64>,
     emitted: u64,
     pub sample_rate: u32,
@@ -825,31 +894,42 @@ pub(crate) struct Stream {
 impl Stream {
     pub fn open(path: &str) -> Result<Self, String> {
         let format = open(path)?;
-        let (sample_rate, channels, n_frames, delay, padding, decoder) = {
-            let track = format.default_track().ok_or("No audio track found")?;
-            let decoder = symphonia::default::get_codecs()
-                .make(&track.codec_params, &DecoderOptions::default())
+        let (sample_rate, channels, n_frames, delay, codec, pre_skip, decoder) = {
+            let track = format
+                .default_track(TrackType::Audio)
+                .ok_or("No audio track found")?;
+            let params = audio_params(track)?;
+            let decoder = codec_registry()
+                .make_audio_decoder(params, &AudioDecoderOptions::default())
                 .map_err(|e| format!("Unsupported codec: {e}"))?;
             (
-                track.codec_params.sample_rate,
-                track.codec_params.channels.map(|c| c.count() as u16),
-                track.codec_params.n_frames,
-                track.codec_params.delay,
-                track.codec_params.padding,
+                params.sample_rate,
+                params.channels.as_ref().map(|c| c.count() as u16),
+                track.num_frames,
+                track.delay,
+                params.codec,
+                if params.codec == CODEC_ID_OPUS {
+                    opus_pre_skip(params)
+                } else {
+                    None
+                },
                 decoder,
             )
         };
 
-        let delay = priming_frames(path, delay).unwrap_or(0);
-        let padding = padding.unwrap_or(0);
-        let _ = padding;
-        // How many frames of the file are real audio, when the header knows.
-        let trim_frames = n_frames.map(|total| total.saturating_sub(delay as u64 + padding as u64));
+        let delay = if trims_in_decoder(codec) {
+            0
+        } else {
+            priming_frames(path, delay.or(pre_skip)).unwrap_or(0)
+        };
+        // n_frames is the playable frame count in 0.6. Ogg includes the delay
+        // in it, so the delay is subtracted here rather than the padding.
+        let trim_frames = n_frames.map(|total| total.saturating_sub(delay as u64));
 
         Ok(Self {
             format,
             decoder,
-            buffer: None,
+            packet_samples: Vec::new(),
             trim_frames,
             emitted: 0,
             // AAC has no channel layout in the container; the first packet fills it in.
@@ -869,7 +949,8 @@ impl Stream {
     pub fn next_chunk(&mut self, skip: &mut u32) -> Result<Option<Vec<f32>>, String> {
         loop {
             let packet = match self.format.next_packet() {
-                Ok(packet) => packet,
+                Ok(Some(packet)) => packet,
+                Ok(None) => return Ok(None),
                 Err(SymphoniaError::IoError(e))
                     if e.kind() == std::io::ErrorKind::UnexpectedEof =>
                 {
@@ -881,7 +962,7 @@ impl Stream {
 
             // Containers seek to a packet, not to a frame: skip the difference.
             if let Some(target) = self.seek_target.take() {
-                let landed = packet.ts();
+                let landed = packet.pts.get().max(0) as u64;
                 *skip = skip.saturating_add(target.saturating_sub(landed) as u32);
             }
 
@@ -896,25 +977,14 @@ impl Stream {
             };
 
             if self.channels == 0 {
-                self.channels = decoded.spec().channels.count() as u16;
-                self.sample_rate = decoded.spec().rate;
+                self.channels = decoded.spec().channels().count() as u16;
+                self.sample_rate = decoded.spec().rate();
             }
 
-            let needs_new = self
-                .buffer
-                .as_ref()
-                .is_none_or(|b| b.capacity() < decoded.capacity());
-            if needs_new {
-                self.buffer = Some(SampleBuffer::<f32>::new(
-                    decoded.capacity() as u64,
-                    *decoded.spec(),
-                ));
-            }
-            let buffer = self.buffer.as_mut().expect("buffer was just created");
-            buffer.copy_interleaved_ref(decoded);
+            decoded.copy_to_vec_interleaved::<f32>(&mut self.packet_samples);
 
             let channels = self.channels as usize;
-            let mut chunk: &[f32] = buffer.samples();
+            let mut chunk: &[f32] = &self.packet_samples;
             if *skip > 0 {
                 let drop = (*skip as usize).saturating_mul(channels).min(chunk.len());
                 chunk = &chunk[drop..];
@@ -950,12 +1020,16 @@ impl Stream {
             .unwrap_or(u64::MAX);
         let target = requested.min(limit.saturating_sub(1));
 
-        let track_id = self.format.default_track().map(|t| t.id).unwrap_or(0);
+        let track_id = self
+            .format
+            .default_track(TrackType::Audio)
+            .map(|t| t.id)
+            .unwrap_or(0);
         self.format
             .seek(
-                symphonia::core::formats::SeekMode::Accurate,
-                SeekTo::TimeStamp {
-                    ts: target,
+                SeekMode::Accurate,
+                SeekTo::Timestamp {
+                    ts: Timestamp::try_from(target).map_err(|_| "Seek target out of range")?,
                     track_id,
                 },
             )
@@ -965,9 +1039,40 @@ impl Stream {
         // `emitted` counts real audio frames since the start of the file, so a
         // seek must jump it forward instead of restarting the padding budget.
         self.emitted = target.saturating_sub(self.delay as u64);
-        self.buffer = None;
+        self.packet_samples.clear();
         self.seek_target = Some(target);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod opus_fuzz {
+    /// Corrupt Opus bytes must return an error, never panic across the FFI.
+    #[test]
+    fn mutated_opus_does_not_panic() {
+        for path in [
+            "/tmp/opus_fixtures/t3s_stereo.opus",
+            "/tmp/opus_fixtures/t3s_stereo.webm",
+        ] {
+            let base = std::fs::read(path).unwrap();
+            let mut state = 0x1234_5678u64;
+            let mut panics = Vec::new();
+            for round in 0..300 {
+                let mut data = base.clone();
+                for _ in 0..8 {
+                    state = state
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    let idx = (state as usize) % data.len();
+                    data[idx] ^= (state >> 33) as u8 | 1;
+                }
+                let result = std::panic::catch_unwind(|| super::decode_bytes(&data));
+                if result.is_err() {
+                    panics.push(round);
+                }
+            }
+            assert!(panics.is_empty(), "panics on {path}: {panics:?}");
+        }
     }
 }
 

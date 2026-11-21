@@ -11,7 +11,7 @@ page(
 <p class="kicker">Python · Rust · macOS / Windows / Linux</p>
 <h1>Audio for Python, without ffmpeg.</h1>
 <p class="lead">sound_rs plays and decodes the formats people actually have — MP3, FLAC, WAV,
-OGG, M4A/AAC/ALAC, AIFF and CAF — from a single wheel. The decoders are compiled in; no ffmpeg
+OGG, M4A/AAC/ALAC, Opus in Ogg/WebM, AIFF and CAF — from a single wheel. The decoders are compiled in; no ffmpeg
 binary is required.
 Linux wheels bundle the ALSA runtime, and array APIs need NumPy.</p>
 
@@ -459,7 +459,7 @@ page(
     """
 <p class="kicker">06 · Guides</p>
 <h1>Formats and gapless</h1>
-<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, ALAC, AIFF and CAF
+<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, Opus, ALAC, AIFF and CAF
 decoding, with encoder-delay trimming where metadata is available.</p>
 
 <h2 id="supported">Supported formats</h2>
@@ -473,6 +473,8 @@ decoding, with encoder-delay trimming where metadata is available.</p>
   <tr><td>ALAC in M4A</td><td class="num">.m4a, .mp4</td><td>symphonia</td><td>Lossless; gapless where the container declares it</td></tr>
   <tr><td>AIFF</td><td class="num">.aiff</td><td>symphonia</td><td>PCM</td></tr>
   <tr><td>CAF</td><td class="num">.caf</td><td>symphonia</td><td>PCM</td></tr>
+  <tr><td>Opus in Ogg</td><td class="num">.opus, .ogg</td><td>symphonia-opus</td><td>48 kHz, 1–8 channels; Ogg pre-skip trimmed</td></tr>
+  <tr><td>Opus in WebM</td><td class="num">.webm, .mkv</td><td>symphonia-opus</td><td>48 kHz, 1–8 channels; one packet of tail padding may remain</td></tr>
 </table>
 <p>There is no extension allowlist. Probing recognizes containers; a successful probe does
 not prove that every codec or packet inside is supported. Raw AAC and other containers need
@@ -486,6 +488,9 @@ sound_rs trims them:</p>
   <li><strong>MP3 and OGG</strong> declare the delay and padding in the container.</li>
   <li><strong>AAC in MP4</strong> records the priming in an edit list that symphonia parses
       but does not expose, so the library reads the <code>elst</code> box itself.</li>
+  <li><strong>Opus in Ogg</strong> trims the pre-skip from <code>OpusHead</code>. WebM/MKV
+      does not expose the final packet padding, so the WebM path can retain up to one Opus
+      packet (about 13.5 ms at 48 kHz) of tail audio.</li>
 </ul>
 <p>Historical comparison: a 60-second AAC file decoded to 2 646 016 frames and agreed with
 ffmpeg to 8·10⁻⁸. AAC can retain less than one codec frame of tail padding; these measurements
@@ -696,7 +701,7 @@ wait releases the GIL; device setup and teardown still depend on the backend.</p
 <h2 id="tradeoffs">What you gain, what you give up</h2>
 <table>
   <tr><th></th><th>sound_rs</th><th>soundfile + sounddevice</th><th>pydub</th></tr>
-  <tr><td>Formats</td><td>WAV, FLAC, MP3, OGG, M4A, ALAC, AIFF, CAF</td><td>WAV, FLAC, MP3; no AAC</td><td>anything ffmpeg reads</td></tr>
+  <tr><td>Formats</td><td>WAV, FLAC, MP3, OGG, M4A, Opus, ALAC, AIFF, CAF</td><td>WAV, FLAC, MP3; no AAC</td><td>anything ffmpeg reads</td></tr>
   <tr><td>External tools</td><td>none</td><td>none</td><td>ffmpeg binary</td></tr>
   <tr><td>Playback without loading</td><td>yes</td><td>no</td><td>no</td></tr>
   <tr><td>Editing (cut, mix, convert)</td><td>no</td><td>no</td><td>yes</td></tr>
@@ -1184,6 +1189,17 @@ page(
     """
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="v080">0.8.0</h2>
+<p class="kicker">Opus and WebM</p>
+<ul>
+  <li>Decode Opus in Ogg (<code>.opus</code>, <code>.ogg</code>) and WebM/Matroska
+      (<code>.webm</code>, <code>.mkv</code>) through pure-Rust <code>symphonia-opus</code>;
+      no system libopus and no C build dependency.</li>
+  <li>Opus supports 1–8 channels and 48 kHz; Ogg pre-skip is trimmed. WebM can retain up to
+      one Opus packet (~13.5 ms) of tail audio because Matroska does not expose it.</li>
+  <li>Upgrade to Symphonia 0.6.1. All nine existing decode fixtures remain byte-identical;
+      MP3 and Vorbis keep their decoder-side trimming.</li>
+</ul>
 <h2 id="v070">0.7.0</h2>
 <p class="kicker">agent metadata</p>
 <ul>

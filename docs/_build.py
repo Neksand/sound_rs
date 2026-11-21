@@ -634,8 +634,8 @@ def llms_txt(version):
     lines = [
         "# sound_rs",
         "",
-        "> Fast Rust audio for Python: play, stream and record WAV, MP3, FLAC, OGG and M4A",
-        "> without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux",
+        "> Fast Rust audio for Python: play, stream and record WAV, MP3, FLAC, OGG, M4A and",
+        "> Opus/WebM without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux",
         "> x86_64/aarch64 (glibc), Linux x86_64 (musl), Windows amd64, macOS arm64/Intel.",
         "",
         f"Version {version}. Install with `pip install sound_rs`. Playback waits release",

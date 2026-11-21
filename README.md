@@ -16,9 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.7.0](https://github.com/Neksand/sound_rs/releases/tag/v0.7.0) — adds
-`probe()` metadata dictionaries and `play_array(layout="frames")`, on top of `soundrs mcp`,
-the streaming Decoder, CLI and formats. Guides for coding agents:
+**Latest release:** [0.8.0](https://github.com/Neksand/sound_rs/releases/tag/v0.8.0) — adds
+Opus in Ogg and WebM on pure-Rust Symphonia 0.6, on top of `probe()`, MCP, the streaming
+Decoder and formats. Guides for coding agents:
 [llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](https://github.com/Neksand/sound_rs/blob/master/AGENTS.md).
 
 ---
@@ -26,8 +26,8 @@ the streaming Decoder, CLI and formats. Guides for coding agents:
 ## 🚀 Features
 
 - **Formats:** WAV (including tested 24-bit PCM), MP3, FLAC, OGG/Vorbis, AAC and ALAC in
-  M4A/MP4, AIFF and CAF; support depends on the codec and container, not just
-  the file extension
+  M4A/MP4, Opus in Ogg/WebM, AIFF and CAF; support depends on the codec and container,
+  not just the file extension
 - **Streaming playback:** incremental decoding into a bounded one-second playback ring;
   the full file is not retained in memory, while decoder/filter/process overhead is additional
 - **`Player`:** one output stream stays open — `play_file`, `play_array`, `pause`, `resume`, `seek`,
@@ -58,7 +58,7 @@ the streaming Decoder, CLI and formats. Guides for coding agents:
   (`io`, `format`, `device`, `stalled`, `unsupported`, `usage`)
 - **Tested behavior:** malformed-input mutation tests, quantized fixture hashes and MP3
   length/level checks, ring-starvation reporting. The full list is on the docs site.
-- **No external decoder:** MP3, FLAC, OGG, AAC, ALAC, AIFF, CAF and WAV decoders are inside the wheel.
+- **No external decoder:** MP3, FLAC, OGG, AAC, Opus, ALAC, AIFF, CAF and WAV decoders are inside the wheel.
   Linux wheels bundle the ALSA runtime; source builds need ALSA development headers. NumPy is
   required for array APIs
 - **CLI and MCP:** `soundrs info --json`, `soundrs convert`, and `soundrs mcp` for

@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.7.0</span>
+  <span class="ver">v0.8.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -31,6 +31,17 @@
 
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="v080">0.8.0</h2>
+<p class="kicker">Opus and WebM</p>
+<ul>
+  <li>Decode Opus in Ogg (<code>.opus</code>, <code>.ogg</code>) and WebM/Matroska
+      (<code>.webm</code>, <code>.mkv</code>) through pure-Rust <code>symphonia-opus</code>;
+      no system libopus and no C build dependency.</li>
+  <li>Opus supports 1–8 channels and 48 kHz; Ogg pre-skip is trimmed. WebM can retain up to
+      one Opus packet (~13.5 ms) of tail audio because Matroska does not expose it.</li>
+  <li>Upgrade to Symphonia 0.6.1. All nine existing decode fixtures remain byte-identical;
+      MP3 and Vorbis keep their decoder-side trimming.</li>
+</ul>
 <h2 id="v070">0.7.0</h2>
 <p class="kicker">agent metadata</p>
 <ul>
@@ -187,10 +198,10 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#v070">0.7.0</a><a href="#v060">0.6.0</a><a href="#v051">0.5.1</a><a href="#v050">0.5.0</a><a href="#v042">0.4.2</a><a href="#v041">0.4.1</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#v080">0.8.0</a><a href="#v070">0.7.0</a><a href="#v060">0.6.0</a><a href="#v051">0.5.1</a><a href="#v050">0.5.0</a><a href="#v042">0.4.2</a><a href="#v041">0.4.1</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.7.0 — MIT</span>
+  <span>sound_rs v0.8.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

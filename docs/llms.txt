@@ -1,10 +1,10 @@
 # sound_rs
 
-> Fast Rust audio for Python: play, stream and record WAV, MP3, FLAC, OGG and M4A
-> without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux
+> Fast Rust audio for Python: play, stream and record WAV, MP3, FLAC, OGG, M4A and
+> Opus/WebM without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux
 > x86_64/aarch64 (glibc), Linux x86_64 (musl), Windows amd64, macOS arm64/Intel.
 
-Version 0.7.0. Install with `pip install sound_rs`. Playback waits release
+Version 0.8.0. Install with `pip install sound_rs`. Playback waits release
 the GIL; decoding returns float32 `(frames, channels)` arrays; library failures raise
 `sound_rs.SoundRsError` with a `.code` of `io`, `format`, `device`, `stalled`,
 `unsupported` or `usage`.

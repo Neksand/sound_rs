@@ -4,11 +4,11 @@ build-backend = "maturin"
 
 [project]
 name = "sound_rs"
-description = "Fast Rust audio for Python: play and stream MP3, FLAC, WAV, OGG and M4A without ffmpeg"
+description = "Fast Rust audio for Python: play and stream MP3, FLAC, WAV, OGG, M4A and Opus without ffmpeg"
 requires-python = ">=3.10"
 keywords = [
     "audio", "playback", "player", "streaming", "mp3", "flac", "wav", "aac",
-    "m4a", "ogg", "numpy", "resampling", "rust", "pyo3", "sound", "dsp",
+    "m4a", "ogg", "opus", "webm", "numpy", "resampling", "rust", "pyo3", "sound", "dsp",
 ]
 license = { text = "MIT" }
 readme = "README.md"

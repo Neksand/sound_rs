@@ -41,7 +41,7 @@ class CliTests(unittest.TestCase):
             },
         )
         self.assertEqual((data["sample_rate"], data["channels"]), (44100, 2))
-        self.assertEqual((data["codec"], data["bit_depth"]), ("pcm", 16))
+        self.assertEqual((data["codec"], data["bit_depth"]), ("pcm_s16le", 16))
         self.assertGreater(data["duration_seconds"], 0)
 
     def test_convert_writes_readable_wav(self):

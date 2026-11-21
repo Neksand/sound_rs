@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.7.0</span>
+  <span class="ver">v0.8.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -31,7 +31,7 @@
 
 <p class="kicker">06 · Guides</p>
 <h1>Formats and gapless</h1>
-<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, ALAC, AIFF and CAF
+<p class="lead">Built-in WAV, FLAC, MP3, Ogg/Vorbis, AAC-in-MP4, Opus, ALAC, AIFF and CAF
 decoding, with encoder-delay trimming where metadata is available.</p>
 
 <h2 id="supported">Supported formats</h2>
@@ -45,6 +45,8 @@ decoding, with encoder-delay trimming where metadata is available.</p>
   <tr><td>ALAC in M4A</td><td class="num">.m4a, .mp4</td><td>symphonia</td><td>Lossless; gapless where the container declares it</td></tr>
   <tr><td>AIFF</td><td class="num">.aiff</td><td>symphonia</td><td>PCM</td></tr>
   <tr><td>CAF</td><td class="num">.caf</td><td>symphonia</td><td>PCM</td></tr>
+  <tr><td>Opus in Ogg</td><td class="num">.opus, .ogg</td><td>symphonia-opus</td><td>48 kHz, 1–8 channels; Ogg pre-skip trimmed</td></tr>
+  <tr><td>Opus in WebM</td><td class="num">.webm, .mkv</td><td>symphonia-opus</td><td>48 kHz, 1–8 channels; one packet of tail padding may remain</td></tr>
 </table>
 <p>There is no extension allowlist. Probing recognizes containers; a successful probe does
 not prove that every codec or packet inside is supported. Raw AAC and other containers need
@@ -58,6 +60,9 @@ sound_rs trims them:</p>
   <li><strong>MP3 and OGG</strong> declare the delay and padding in the container.</li>
   <li><strong>AAC in MP4</strong> records the priming in an edit list that symphonia parses
       but does not expose, so the library reads the <code>elst</code> box itself.</li>
+  <li><strong>Opus in Ogg</strong> trims the pre-skip from <code>OpusHead</code>. WebM/MKV
+      does not expose the final packet padding, so the WebM path can retain up to one Opus
+      packet (about 13.5 ms at 48 kHz) of tail audio.</li>
 </ul>
 <p>Historical comparison: a 60-second AAC file decoded to 2 646 016 frames and agreed with
 ffmpeg to 8·10⁻⁸. AAC can retain less than one codec frame of tail padding; these measurements
@@ -100,7 +105,7 @@ details, or decodes the file to determine an unknown duration. Its cost can grow
   <aside class="toc"><h2>On this page</h2><a href="#supported">Supported formats</a><a href="#gapless">Gapless</a><a href="#depth">Bit depth</a><a href="#errors">When a file will not open</a><a href="#probe">Checking without decoding</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.7.0 — MIT</span>
+  <span>sound_rs v0.8.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

@@ -42,3 +42,18 @@ Notes:
 - `tone.m4a` decodes to 11264 frames, not 11025: AAC pads the tail to a frame
   boundary and the container carries no padding value. Priming is trimmed from
   the edit list; the residual is under one frame.
+
+Opus/WebM fixtures (`tests/test_opus.py`):
+
+```
+ffmpeg -y -i tone.wav -c:a libopus -b:a 64k tone_opus_mono.opus
+ffmpeg -y -i tone.wav -c:a libopus -b:a 96k tone_opus_stereo.opus
+ffmpeg -y -i tone.wav -c:a libopus -b:a 64k tone_opus_mono.webm
+ffmpeg -y -i tone.wav -c:a libopus -b:a 96k tone_opus_stereo.webm
+# 5.1 source is generated separately
+```
+
+Ogg Opus trims to exactly 144000 frames for the 3-second fixture. WebM carries
+no padding count in the container, so the decoder retains one Opus packet of
+tail audio (144648 frames); the first 144000 samples match the Ogg fixture.
+`speech_opus_mono.opus` is real SILK-mode speech generated with macOS `say`.

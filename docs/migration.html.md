@@ -73,7 +73,7 @@ The wheel includes the same decoder families on each supported platform. The pla
 
 |  | sound_rs | soundfile + sounddevice | pydub |
 |---|---|---|---|
-| Formats | WAV, FLAC, MP3, OGG, M4A, ALAC, AIFF, CAF | WAV, FLAC, MP3; no AAC | anything ffmpeg reads |
+| Formats | WAV, FLAC, MP3, OGG, M4A, Opus, ALAC, AIFF, CAF | WAV, FLAC, MP3; no AAC | anything ffmpeg reads |
 | External tools | none | none | ffmpeg binary |
 | Playback without loading | yes | no | no |
 | Editing (cut, mix, convert) | no | no | yes |

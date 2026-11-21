@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- Decode Opus in Ogg (`.opus`, `.ogg`) and WebM/Matroska (`.webm`, `.mkv`) through pure-Rust `symphonia-opus`; no system libopus and no C build dependency.
+
+- Opus supports 1–8 channels and 48 kHz; Ogg pre-skip is trimmed. WebM can retain up to one Opus packet (~13.5 ms) of tail audio because Matroska does not expose it.
+
+- Upgrade to Symphonia 0.6.1. All nine existing decode fixtures remain byte-identical; MP3 and Vorbis keep their decoder-side trimming.
+
 ## 0.7.0
 
 - `sound_rs.probe(path)` returns a metadata dictionary with codec, bit depth, frames and duration, without decoding the whole file. Missing fields are `None`.

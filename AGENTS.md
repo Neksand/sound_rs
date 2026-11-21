@@ -12,7 +12,7 @@ decoding to NumPy, and now WAV writing. No ffmpeg, no system decoders.
 | Path | Owns |
 |---|---|
 | `src/lib.rs` | module registration, most PyO3 functions, NumPy conversion, `SoundRsError` |
-| `src/audio.rs` | decoding (symphonia), gapless trim, MP4 edit list, resampling (rubato), channel conversion |
+| `src/audio.rs` | decoding (symphonia 0.6 + symphonia-opus), gapless trim, MP4 edit list, resampling (rubato), channel conversion |
 | `src/player.rs` | the persistent output stream: `Player`, queue, fed streams, underruns |
 | `src/decoder.rs` | incremental `Decoder`: fixed-size blocks, optional resampling and mono |
 | `src/mcp.rs` | Model Context Protocol stdio server (`soundrs mcp`) |
@@ -98,5 +98,9 @@ separate optional runs; never report them passed merely because a headless job p
 - Full-file MP3 goes through Symphonia now; it used to use minimp3. Full-file, bytes,
   streaming and windowed MP3 share one decoder path. The fixture aligns with ffmpeg at lag 0.
 - AAC-in-MP4 bytes read the MP4 edit list for priming, same as the file path.
+- Symphonia 0.6's MP3 and Vorbis decoders apply their own packet trims; do not subtract
+  container delay/padding again. `Track.num_frames` is the playable count after delay.
+- Opus in WebM keeps pre-skip in `OpusHead`; Matroska does not expose final padding, so the
+  WebM path can retain up to one Opus packet of tail audio.
 - `pub(crate)` inside `#[pymethods]` is still exposed to Python. Check the generated API,
   not just Rust visibility; keep `Player.play_samples` documented and typed.
