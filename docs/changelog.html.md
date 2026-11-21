@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- `sound_rs.probe(path)` returns a metadata dictionary with codec, bit depth, frames and duration, without decoding the whole file. Missing fields are `None`.
+
+- `play_array(..., layout="frames")` accepts the same `(frames, channels)` layout as `load`; the default remains channels-first for compatibility.
+
 ## 0.6.0
 
 - `soundrs mcp` starts a Model Context Protocol stdio server with `audio_info` and `convert` tools. It never opens an audio device and works in headless containers.

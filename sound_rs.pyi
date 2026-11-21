@@ -1,5 +1,5 @@
 from os import PathLike
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -12,6 +12,7 @@ __all__ = [
     "Player",
     "SoundRsError",
     "get_audio_info",
+    "probe",
     "is_supported_format",
     "list_devices",
     "load",
@@ -40,6 +41,14 @@ def is_supported_format(file_path: _Path) -> bool:
 
 def get_audio_info(file_path: _Path) -> Tuple[int, int, float]:
     """`(sample_rate, channels, duration_seconds)` from the container header."""
+
+def probe(file_path: _Path) -> Dict[str, object]:
+    """Metadata dictionary: `file`, `sample_rate`, `channels`,
+    `duration_seconds`, `frames`, `codec`, `bit_depth`.
+
+    Unknown fields are `None`. Unlike `get_audio_info`, this keeps codec and
+    bit depth and never decodes a whole file just to report metadata.
+    """
 
 def load(
     file_path: _Path,
@@ -94,8 +103,16 @@ def load_many(
     `None` in that slot instead.
     """
 
-def play_array(array: npt.NDArray[np.float32], sample_rate: int) -> None:
-    """Play a 1D mono `(samples,)` or 2D `(channels, samples)` float32 array."""
+def play_array(
+    array: npt.NDArray[np.float32],
+    sample_rate: int,
+    layout: str = "channels",
+) -> None:
+    """Play a 1D mono or 2D float32 array.
+
+    `layout="channels"` expects `(channels, frames)`; `layout="frames"` expects
+    `(frames, channels)`, the layout `load` returns.
+    """
 
 def play_sine_wave(frequency: float, duration: float, sample_rate: int) -> None: ...
 
@@ -186,7 +203,12 @@ class Player:
     def paused(self) -> bool: ...
     def play_file(self, path: _Path) -> None:
         """Stream a file; returns immediately, audio is decoded as it plays."""
-    def play_array(self, array: npt.NDArray[np.float32], sample_rate: int) -> None: ...
+    def play_array(
+        self,
+        array: npt.NDArray[np.float32],
+        sample_rate: int,
+        layout: str = "channels",
+    ) -> None: ...
     def play_samples(self, samples: Sequence[float], src_channels: int, sample_rate: int) -> None:
         """Play interleaved samples with an explicit source channel count."""
     def pause(self) -> None: ...

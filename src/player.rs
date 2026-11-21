@@ -655,8 +655,23 @@ impl Player {
     }
 
     /// Play an in-memory array at the device format. Needs `numpy`.
-    pub(crate) fn play_array(&mut self, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
-        let (samples, channels) = crate::numpy_samples(&array)?;
+    #[pyo3(signature = (array, sample_rate, layout="channels"))]
+    pub(crate) fn play_array(
+        &mut self,
+        array: Bound<'_, PyAny>,
+        sample_rate: u32,
+        layout: &str,
+    ) -> PyResult<()> {
+        let (samples, channels) = match layout {
+            "channels" => crate::numpy_samples(&array)?,
+            "frames" => crate::numpy_frames(&array)?,
+            other => {
+                return Err(error_with(
+                    "usage",
+                    format!("Unknown layout '{other}'. Use channels or frames"),
+                ))
+            }
+        };
         self.play_samples(samples, channels, sample_rate)
     }
 

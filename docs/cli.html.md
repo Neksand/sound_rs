@@ -43,7 +43,7 @@ Links
 | Command | What it does |
 |---|---|
 | soundrs play FILE | Plays a file and waits.  --device  picks an output device,  --volume  takes 0…4. |
-| soundrs info FILE [--json] | Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing.  --json  prints one machine-readable line. |
+| soundrs info FILE [--json] | Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing.  --json  prints one machine-readable line with frames, codec and bit depth. |
 | soundrs convert IN OUT.wav | Decodes any supported input and writes PCM16, PCM24 or float32 WAV via  --subtype . |
 | soundrs devices | Output devices, the default marked with  * . |
 | soundrs mcp | Starts the MCP stdio server with  audio_info  and  convert  tools. |
@@ -79,7 +79,7 @@ channels     2
 duration     42:13.6 (2533.612 s)
 
 $ soundrs info podcast.m4a --json
-{"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612}
+{"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612,"frames":111732289,"codec":"aac","bit_depth":null}
 ```
 
 ## MCP server for AI agents

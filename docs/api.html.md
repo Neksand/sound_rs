@@ -47,6 +47,19 @@ Returns `(sample_rate, channels, duration_seconds)`. Uses the header when comple
 
 If the header has no frame count, the file is decoded to measure duration. The returned duration is a number; this function does not return `None`.
 
+## probe
+
+```
+sound_rs.probe(file_path: str | os.PathLike[str]) -> dict[str, object]
+```
+
+Returns metadata without decoding the whole file: `file`, `sample_rate`, `channels`, `duration_seconds`, `frames`, `codec` and `bit_depth`. Fields the container does not provide are `None`; missing rate/channel information can require one packet. This is the agent-friendly alternative to the `get_audio_info` tuple.
+
+```
+info = sound_rs.probe("voice.m4a")
+print(info["sample_rate"], info["channels"], info["codec"])
+```
+
 ## load
 
 ```
@@ -80,10 +93,10 @@ good = [clip for clip in clips if clip is not None]
 ## play_array
 
 ```
-sound_rs.play_array(array: numpy.ndarray, sample_rate: int) -> None
+sound_rs.play_array(array: numpy.ndarray, sample_rate: int, layout: str = "channels") -> None
 ```
 
-Plays a float32 array: `(frames,)` for mono or `(channels, frames)` for multichannel. Converts to the device layout and resamples if the rate differs, then blocks until playback ends.
+Plays a float32 array: `(frames,)` for mono or, by default, `(channels, frames)` for multichannel. Pass `layout="frames"` for `(frames, channels)` — the layout `load` returns. Converts to the device layout and resamples if the rate differs, then blocks until playback ends.
 
 Raises `TypeError` for an unsupported dtype/dimensionality, `SoundRsError(code="usage")` for invalid rates, channel counts or non-finite samples, and `SoundRsError(code="device")` for device failures.
 
@@ -217,7 +230,7 @@ Opens one output stream and keeps it open. Device name matching is exact; the de
 | Signature | Returns | Notes |
 |---|---|---|
 | play_file(path) | None | Probes the header, then streams from disk and returns before playback finishes; path accepts  str  or  os.PathLike |
-| play_array(array, rate) | None | 1D or 2D float32 |
+| play_array(array, rate, layout="channels") | None | 1D or 2D float32;  layout="frames"  for  (frames, channels) |
 | play_samples(samples, src_channels, sample_rate) | None | Interleaved Python sequence, converted to float32; no NumPy required |
 | pause() | None | Position freezes |
 | resume() | None | Continues an active source; a finished feed requires begin_feed again |

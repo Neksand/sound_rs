@@ -650,6 +650,7 @@ def llms_txt(version):
         "The `soundrs` CLI supports `info --json` and `convert` for shell and agent workflows.",
         "`soundrs mcp` starts a Model Context Protocol stdio server with `audio_info` and",
         "`convert` tools; it never opens an audio device.",
+        "`sound_rs.probe(path)` returns codec, bit depth, frames and duration as a dict.",
         "",
         "Reading order for a coding task: Overview, Quickstart, then the guide for the job",
         "(player, datasets, recording, writing, numpy, migration), then the API reference.",

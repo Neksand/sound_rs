@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.6.0</span>
+  <span class="ver">v0.7.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -72,6 +72,15 @@ missing rate or channel information can require decoding a packet.</p>
 <p>If the header has no frame count, the file is decoded to measure duration. The returned
 duration is a number; this function does not return <code>None</code>.</p>
 
+<h2 id="probe">probe</h2>
+<pre data-lang=""><code>sound_rs.probe(file_path: str | os.PathLike[str]) -&gt; dict[str, object]</code></pre>
+<p>Returns metadata without decoding the whole file: <code>file</code>,
+<code>sample_rate</code>, <code>channels</code>, <code>duration_seconds</code>,
+<code>frames</code>, <code>codec</code> and <code>bit_depth</code>. Fields the container does
+not provide are <code>None</code>; missing rate/channel information can require one packet.
+This is the agent-friendly alternative to the <code>get_audio_info</code> tuple.</p>
+<pre data-lang=""><code>info = sound_rs.probe(&quot;voice.m4a&quot;)
+print(info[&quot;sample_rate&quot;], info[&quot;channels&quot;], info[&quot;codec&quot;])</code></pre>
 <h2 id="load">load</h2>
 <pre data-lang=""><code>sound_rs.load(file_path: str | os.PathLike[str], sample_rate: int | None = None,
               mono: bool = False, offset: float = 0.0,
@@ -103,10 +112,11 @@ conversion apply to every file; the whole batch is retained in memory.</p>
 <pre data-lang=""><code>clips = sound_rs.load_many([&quot;a.flac&quot;, &quot;b.flac&quot;], threads=2, on_error=&quot;skip&quot;)
 good = [clip for clip in clips if clip is not None]</code></pre>
 <h2 id="play-array">play_array</h2>
-<pre data-lang=""><code>sound_rs.play_array(array: numpy.ndarray, sample_rate: int) -&gt; None</code></pre>
-<p>Plays a float32 array: <code>(frames,)</code> for mono or <code>(channels, frames)</code>
-for multichannel. Converts to the device layout and resamples if the rate differs, then blocks
-until playback ends.</p>
+<pre data-lang=""><code>sound_rs.play_array(array: numpy.ndarray, sample_rate: int, layout: str = &quot;channels&quot;) -&gt; None</code></pre>
+<p>Plays a float32 array: <code>(frames,)</code> for mono or, by default,
+<code>(channels, frames)</code> for multichannel. Pass <code>layout="frames"</code> for
+<code>(frames, channels)</code> — the layout <code>load</code> returns. Converts to the device
+layout and resamples if the rate differs, then blocks until playback ends.</p>
 <p>Raises <code>TypeError</code> for an unsupported dtype/dimensionality,
 <code>SoundRsError(code="usage")</code> for invalid rates, channel counts or non-finite
 samples, and <code>SoundRsError(code="device")</code> for device failures.</p>
@@ -210,7 +220,7 @@ stops playback on exit; the device stream closes when the object is destroyed.</
 <table>
   <tr><th>Signature</th><th>Returns</th><th>Notes</th></tr>
   <tr><td class="num">play_file(path)</td><td>None</td><td>Probes the header, then streams from disk and returns before playback finishes; path accepts <code>str</code> or <code>os.PathLike</code></td></tr>
-  <tr><td class="num">play_array(array, rate)</td><td>None</td><td>1D or 2D float32</td></tr>
+  <tr><td class="num">play_array(array, rate, layout="channels")</td><td>None</td><td>1D or 2D float32; <code>layout="frames"</code> for <code>(frames, channels)</code></td></tr>
   <tr><td class="num">play_samples(samples, src_channels, sample_rate)</td><td>None</td><td>Interleaved Python sequence, converted to float32; no NumPy required</td></tr>
   <tr><td class="num">pause()</td><td>None</td><td>Position freezes</td></tr>
   <tr><td class="num">resume()</td><td>None</td><td>Continues an active source; a finished feed requires begin_feed again</td></tr>
@@ -264,10 +274,10 @@ with sound_rs.Player() as player:
 
 <div class="next"><a href="migration.html">← Coming from another library</a><a href="benchmarks.html">Benchmarks →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#write">write</a><a href="#write-bytes">write_bytes</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#decoder">Decoder</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#module">Module</a><a href="#play-audio">play_audio</a><a href="#is-supported-format">is_supported_format</a><a href="#get-audio-info">get_audio_info</a><a href="#probe">probe</a><a href="#load">load</a><a href="#load-many">load_many</a><a href="#play-array">play_array</a><a href="#play-sine-wave">play_sine_wave</a><a href="#cli">cli</a><a href="#write">write</a><a href="#write-bytes">write_bytes</a><a href="#load-bytes">load_bytes</a><a href="#list-devices">list_devices</a><a href="#recorder">Recorder</a><a href="#list-input-devices">list_input_devices</a><a href="#decoder">Decoder</a><a href="#player">Player</a><a href="#exceptions">Exceptions</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.6.0 — MIT</span>
+  <span>sound_rs v0.7.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

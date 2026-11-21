@@ -16,9 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.6.0](https://github.com/Neksand/sound_rs/releases/tag/v0.6.0) — adds
-`soundrs mcp` for AI-agent tool calls, on top of the 0.5.x streaming Decoder, CLI, formats and
-musllinux wheel. Guides for coding agents:
+**Latest release:** [0.7.0](https://github.com/Neksand/sound_rs/releases/tag/v0.7.0) — adds
+`probe()` metadata dictionaries and `play_array(layout="frames")`, on top of `soundrs mcp`,
+the streaming Decoder, CLI and formats. Guides for coding agents:
 [llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](https://github.com/Neksand/sound_rs/blob/master/AGENTS.md).
 
 ---
@@ -48,8 +48,8 @@ musllinux wheel. Guides for coding agents:
   measure lack of progress, and `wait()` includes the final audio drain
 - **Gapless metadata:** encoder delay/padding are trimmed where available. All MP3 paths
   use Symphonia; AAC can retain less than one codec frame of tail padding
-- **Metadata:** `get_audio_info` uses the container header when complete; missing information
-  can require packet or full-file decoding
+- **Metadata:** `get_audio_info` returns the `(rate, channels, duration)` tuple;
+  `probe` returns a dict with codec, bit depth, frames and optional fields
 - **Resampling:** rubato's FFT resampler with a proper anti-aliasing filter
   and streaming EOF drain that preserves the converted frame count and filter tail
 - **Device-native output:** the stream opens in whatever sample format the device
@@ -182,6 +182,7 @@ player.wait()
 
 ```python
 sample_rate, channels, duration = sound_rs.get_audio_info("music.mp3")  # header when sufficient
+info = sound_rs.probe("music.mp3")                                      # dict incl. codec/bit depth
 audio, rate = sound_rs.load("music.flac")                               # (frames, channels) float32
 audio, rate = sound_rs.load("music.flac", sample_rate=16000, mono=True) # dataset shape
 

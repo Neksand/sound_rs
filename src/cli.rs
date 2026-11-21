@@ -204,20 +204,39 @@ fn run(py: Python<'_>, command: Command) -> i32 {
             }
             Err(message) => fail(message),
         },
-        Command::Info { path, json } => match py.detach(|| audio::info_or_decode(&path)) {
-            Ok((rate, channels, seconds)) => {
-                if json {
-                    println!("{}", info_json(&path, rate, channels, seconds));
-                } else {
-                    println!("file         {path}");
-                    println!("sample rate  {rate} Hz");
-                    println!("channels     {channels}");
-                    println!("duration     {} ({seconds:.3} s)", clock(seconds));
+        Command::Info { path, json } => {
+            if json {
+                match py.detach(|| audio::details(&path)) {
+                    Ok(details) => {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "file": path,
+                                "sample_rate": details.sample_rate,
+                                "channels": details.channels,
+                                "duration_seconds": details.duration_seconds,
+                                "frames": details.frames,
+                                "codec": details.codec,
+                                "bit_depth": details.bit_depth
+                            })
+                        );
+                        0
+                    }
+                    Err(message) => fail(message),
                 }
-                0
+            } else {
+                match py.detach(|| audio::info_or_decode(&path)) {
+                    Ok((rate, channels, seconds)) => {
+                        println!("file         {path}");
+                        println!("sample rate  {rate} Hz");
+                        println!("channels     {channels}");
+                        println!("duration     {} ({seconds:.3} s)", clock(seconds));
+                        0
+                    }
+                    Err(message) => fail(message),
+                }
             }
-            Err(message) => fail(message),
-        },
+        }
         Command::Convert {
             input,
             output,
@@ -271,34 +290,6 @@ fn run(py: Python<'_>, command: Command) -> i32 {
 fn fail(message: String) -> i32 {
     eprintln!("soundrs: {message}");
     1
-}
-
-/// One JSON line for `info --json`: hand-rolled so the CLI needs no serde.
-fn info_json(path: &str, rate: u32, channels: u16, seconds: f32) -> String {
-    // A non-finite duration would make the line invalid JSON.
-    let seconds = if seconds.is_finite() { seconds } else { 0.0 };
-    format!(
-        "{{\"file\":{},\"sample_rate\":{rate},\"channels\":{channels},\"duration_seconds\":{seconds}}}",
-        json_string(path)
-    )
-}
-
-fn json_string(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 /// 213.4 seconds -> "3:33.4".
@@ -445,26 +436,6 @@ mod tests {
                 other => panic!("{bad:?} parsed as {other:?}"),
             }
         }
-    }
-
-    #[test]
-    fn json_escapes_quotes_backslashes_and_controls() {
-        assert_eq!(json_string("a\"b\\c"), r#""a\"b\\c""#);
-        assert_eq!(json_string("a\nb\tc"), r#""a\nb\tc""#);
-        assert_eq!(json_string("a\u{1}b"), r#""a\u0001b""#);
-        assert!(!json_string("a\nb").contains('\n'));
-    }
-
-    #[test]
-    fn info_json_is_one_line_with_numeric_values() {
-        assert_eq!(
-            info_json("a.flac", 48_000, 2, 1.5),
-            r#"{"file":"a.flac","sample_rate":48000,"channels":2,"duration_seconds":1.5}"#
-        );
-        assert_eq!(
-            info_json("x\".wav", 44_100, 1, f32::NAN),
-            r#"{"file":"x\".wav","sample_rate":44100,"channels":1,"duration_seconds":0}"#
-        );
     }
 
     #[test]

@@ -48,6 +48,8 @@ pub(crate) struct TrackInfo {
     frames: Option<u64>,
     delay: u64,
     padding: u64,
+    codec: Option<String>,
+    bit_depth: Option<u32>,
 }
 
 pub(crate) fn probe_info(path: &str) -> Result<TrackInfo, String> {
@@ -59,6 +61,60 @@ pub(crate) fn probe_info(path: &str) -> Result<TrackInfo, String> {
         frames: track.codec_params.n_frames,
         delay: priming_frames(path, track.codec_params.delay).unwrap_or(0) as u64,
         padding: track.codec_params.padding.unwrap_or(0) as u64,
+        codec: Some(codec_name(track.codec_params.codec)),
+        bit_depth: track.codec_params.bits_per_sample,
+    })
+}
+
+fn codec_name(codec: symphonia::core::codecs::CodecType) -> String {
+    let raw = codec.to_string();
+    let value = u32::from_str_radix(raw.trim_start_matches("0x"), 16).unwrap_or(0);
+    match value {
+        0x100..=0x11b => "pcm",
+        0x1000 => "vorbis",
+        0x1001 => "mp1",
+        0x1002 => "mp2",
+        0x1003 => "mp3",
+        0x1004 => "aac",
+        0x1005 => "opus",
+        0x2000 => "flac",
+        0x2003 => "alac",
+        _ => "unknown",
+    }
+    .to_string()
+}
+
+/// Lightweight metadata for `probe()`. Unlike `get_audio_info`, this reports
+/// the codec and bit depth, and keeps unknown fields as `None`.
+pub(crate) struct Details {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub duration_seconds: Option<f64>,
+    pub frames: Option<u64>,
+    pub codec: Option<String>,
+    pub bit_depth: Option<u32>,
+}
+
+pub(crate) fn details(path: &str) -> Result<Details, String> {
+    let info = probe_info(path)?;
+    let (mut rate, mut channels) = (info.sample_rate, info.channels);
+    if rate.is_none() || channels.is_none() {
+        let (sniffed_rate, sniffed_channels) = sniff_spec(path)?;
+        rate.get_or_insert(sniffed_rate);
+        channels.get_or_insert(sniffed_channels);
+    }
+    let rate = rate.ok_or("Unknown sample rate")?;
+    let channels = channels.ok_or("Unknown channel layout")?;
+    let frames = info
+        .frames
+        .map(|frames| frames.saturating_sub(info.delay.saturating_add(info.padding)));
+    Ok(Details {
+        sample_rate: rate,
+        channels,
+        duration_seconds: frames.map(|frames| frames as f64 / rate as f64),
+        frames,
+        codec: info.codec,
+        bit_depth: info.bit_depth,
     })
 }
 

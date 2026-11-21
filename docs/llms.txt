@@ -4,7 +4,7 @@
 > without ffmpeg, with bounded playback streaming and a typed API. Python 3.10+, wheels for Linux
 > x86_64/aarch64 (glibc), Linux x86_64 (musl), Windows amd64, macOS arm64/Intel.
 
-Version 0.6.0. Install with `pip install sound_rs`. Playback waits release
+Version 0.7.0. Install with `pip install sound_rs`. Playback waits release
 the GIL; decoding returns float32 `(frames, channels)` arrays; library failures raise
 `sound_rs.SoundRsError` with a `.code` of `io`, `format`, `device`, `stalled`,
 `unsupported` or `usage`.
@@ -16,6 +16,7 @@ preparation and teardown can still hold it. record_to captures in memory, then w
 The `soundrs` CLI supports `info --json` and `convert` for shell and agent workflows.
 `soundrs mcp` starts a Model Context Protocol stdio server with `audio_info` and
 `convert` tools; it never opens an audio device.
+`sound_rs.probe(path)` returns codec, bit depth, frames and duration as a dict.
 
 Reading order for a coding task: Overview, Quickstart, then the guide for the job
 (player, datasets, recording, writing, numpy, migration), then the API reference.

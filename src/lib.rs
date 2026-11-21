@@ -15,7 +15,7 @@ mod writer;
 use player::Player;
 use pyo3::create_exception;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyDict};
 use std::path::{Path, PathBuf};
 
 create_exception!(sound_rs, SoundRsError, pyo3::exceptions::PyRuntimeError);
@@ -263,6 +263,23 @@ fn get_audio_info(py: Python<'_>, file_path: PathBuf) -> PyResult<(u32, u16, f32
         .map_err(error)
 }
 
+/// Metadata as a dictionary: codec, bit depth, rate, channels, frames and
+/// duration. Unknown fields are `None`.
+#[pyfunction]
+fn probe<'py>(py: Python<'py>, file_path: PathBuf) -> PyResult<Bound<'py, PyDict>> {
+    let file_path = path_string(file_path)?;
+    let details = py.detach(|| audio::details(&file_path)).map_err(error)?;
+    let result = PyDict::new(py);
+    result.set_item("file", &file_path)?;
+    result.set_item("sample_rate", details.sample_rate)?;
+    result.set_item("channels", details.channels)?;
+    result.set_item("duration_seconds", details.duration_seconds)?;
+    result.set_item("frames", details.frames)?;
+    result.set_item("codec", details.codec)?;
+    result.set_item("bit_depth", details.bit_depth)?;
+    Ok(result)
+}
+
 /// Decode a file to `(array, sample_rate)`, shape `(frames, channels)`, float32.
 ///
 /// `sample_rate` resamples, `mono` folds every channel into one, `offset` and
@@ -408,16 +425,32 @@ fn load_many<'py>(
         .collect()
 }
 
-/// Play a NumPy array of f32: 1D mono `(samples,)` or 2D `(channels, samples)`.
+/// Play a NumPy array of f32: 1D mono `(samples,)` or 2D `(channels, samples)`
+/// by default. Pass `layout="frames"` for `(frames, channels)`.
 #[pyfunction]
-fn play_array(py: Python<'_>, array: Bound<'_, PyAny>, sample_rate: u32) -> PyResult<()> {
+#[pyo3(signature = (array, sample_rate, layout="channels"))]
+fn play_array(
+    py: Python<'_>,
+    array: Bound<'_, PyAny>,
+    sample_rate: u32,
+    layout: &str,
+) -> PyResult<()> {
     if sample_rate == 0 {
         return Err(error_with(
             "usage",
             "sample_rate must be positive".to_string(),
         ));
     }
-    let (samples, channels) = numpy_samples(&array)?;
+    let (samples, channels) = match layout {
+        "channels" => numpy_samples(&array)?,
+        "frames" => numpy_frames(&array)?,
+        other => {
+            return Err(error_with(
+                "usage",
+                format!("Unknown layout '{other}'. Use channels or frames"),
+            ))
+        }
+    };
     let mut player = Player::new(None)?;
     player.play_samples(samples, channels, sample_rate)?;
     player.wait(py)
@@ -502,6 +535,7 @@ fn sound_rs(_py: Python<'_>, m: Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(play_audio, &m)?)?;
     m.add_function(wrap_pyfunction!(is_supported_format, &m)?)?;
     m.add_function(wrap_pyfunction!(get_audio_info, &m)?)?;
+    m.add_function(wrap_pyfunction!(probe, &m)?)?;
     m.add_function(wrap_pyfunction!(load, &m)?)?;
     m.add_function(wrap_pyfunction!(load_bytes, &m)?)?;
     m.add_function(wrap_pyfunction!(write, &m)?)?;

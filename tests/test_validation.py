@@ -40,6 +40,25 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(written_rate, rate)
         np.testing.assert_array_equal(written, data)
 
+    def test_probe_metadata(self):
+        info = sound_rs.probe(self.fixture)
+        self.assertEqual(
+            set(info),
+            {
+                "file",
+                "sample_rate",
+                "channels",
+                "duration_seconds",
+                "frames",
+                "codec",
+                "bit_depth",
+            },
+        )
+        self.assertEqual((info["sample_rate"], info["channels"]), (44100, 2))
+        self.assertGreater(info["duration_seconds"], 0)
+        self.assertEqual(info["codec"], "pcm")
+        self.assertEqual(info["bit_depth"], 16)
+
     def test_invalid_write_preserves_existing_file(self):
         sentinel = b"existing file must survive rejected input"
         cases = [
@@ -142,6 +161,13 @@ class ValidationTests(unittest.TestCase):
         self.assert_code("usage", sound_rs.play_array, np.zeros((0, 1), dtype=np.float32), 44100)
         self.assert_code("usage", sound_rs.play_array, np.zeros((65536, 1), dtype=np.float32), 44100)
         self.assert_code("usage", sound_rs.play_array, np.zeros(1, dtype=np.float32), 0)
+        self.assert_code(
+            "usage",
+            sound_rs.play_array,
+            np.zeros((1, 1), dtype=np.float32),
+            44100,
+            layout="bad",
+        )
 
     def test_load_options_rejected_before_file_access(self):
         for key in ("offset", "duration"):

@@ -29,9 +29,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         data = json.loads(result.stdout)
         self.assertEqual(
-            set(data), {"file", "sample_rate", "channels", "duration_seconds"}
+            set(data),
+            {
+                "file",
+                "sample_rate",
+                "channels",
+                "duration_seconds",
+                "frames",
+                "codec",
+                "bit_depth",
+            },
         )
         self.assertEqual((data["sample_rate"], data["channels"]), (44100, 2))
+        self.assertEqual((data["codec"], data["bit_depth"]), ("pcm", 16))
         self.assertGreater(data["duration_seconds"], 0)
 
     def test_convert_writes_readable_wav(self):

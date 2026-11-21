@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.6.0</span>
+  <span class="ver">v0.7.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -68,7 +68,7 @@ Links
 <table>
   <tr><th>Command</th><th>What it does</th></tr>
   <tr><td class="num">soundrs play FILE</td><td>Plays a file and waits. <code>--device</code> picks an output device, <code>--volume</code> takes 0…4.</td></tr>
-  <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line.</td></tr>
+  <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line with frames, codec and bit depth.</td></tr>
   <tr><td class="num">soundrs convert IN OUT.wav</td><td>Decodes any supported input and writes PCM16, PCM24 or float32 WAV via <code>--subtype</code>.</td></tr>
   <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
   <tr><td class="num">soundrs mcp</td><td>Starts the MCP stdio server with <code>audio_info</code> and <code>convert</code> tools.</td></tr>
@@ -98,7 +98,7 @@ channels     2
 duration     42:13.6 (2533.612 s)
 
 $ soundrs info podcast.m4a --json
-{&quot;file&quot;:&quot;podcast.m4a&quot;,&quot;sample_rate&quot;:44100,&quot;channels&quot;:2,&quot;duration_seconds&quot;:2533.612}</code></pre><div class="note"><b>Exit codes</b><code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), <code>2</code> bad usage. Errors go to stderr, so the commands compose in shell pipelines.</div>
+{&quot;file&quot;:&quot;podcast.m4a&quot;,&quot;sample_rate&quot;:44100,&quot;channels&quot;:2,&quot;duration_seconds&quot;:2533.612,&quot;frames&quot;:111732289,&quot;codec&quot;:&quot;aac&quot;,&quot;bit_depth&quot;:null}</code></pre><div class="note"><b>Exit codes</b><code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), <code>2</code> bad usage. Errors go to stderr, so the commands compose in shell pipelines.</div>
 <h2 id="mcp">MCP server for AI agents</h2>
 <p><code>soundrs mcp</code> speaks the Model Context Protocol over stdio. It does not open
 an audio device. Tools:</p>
@@ -131,7 +131,7 @@ output device at all.</p>
   <aside class="toc"><h2>On this page</h2><a href="#commands">Commands</a><a href="#examples">Examples</a><a href="#mcp">MCP server for AI agents</a><a href="#install-check">Checking an install</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.6.0 — MIT</span>
+  <span>sound_rs v0.7.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

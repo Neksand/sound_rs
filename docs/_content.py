@@ -761,6 +761,19 @@ missing rate or channel information can require decoding a packet.</p>
 <p>If the header has no frame count, the file is decoded to measure duration. The returned
 duration is a number; this function does not return <code>None</code>.</p>
 
+<h2 id="probe">probe</h2>
+""" + code("""
+sound_rs.probe(file_path: str | os.PathLike[str]) -> dict[str, object]
+""") + """
+<p>Returns metadata without decoding the whole file: <code>file</code>,
+<code>sample_rate</code>, <code>channels</code>, <code>duration_seconds</code>,
+<code>frames</code>, <code>codec</code> and <code>bit_depth</code>. Fields the container does
+not provide are <code>None</code>; missing rate/channel information can require one packet.
+This is the agent-friendly alternative to the <code>get_audio_info</code> tuple.</p>
+""" + code("""
+info = sound_rs.probe("voice.m4a")
+print(info["sample_rate"], info["channels"], info["codec"])
+""") + """
 <h2 id="load">load</h2>
 """ + code("""
 sound_rs.load(file_path: str | os.PathLike[str], sample_rate: int | None = None,
@@ -799,11 +812,12 @@ good = [clip for clip in clips if clip is not None]
 """) + """
 <h2 id="play-array">play_array</h2>
 """ + code("""
-sound_rs.play_array(array: numpy.ndarray, sample_rate: int) -> None
+sound_rs.play_array(array: numpy.ndarray, sample_rate: int, layout: str = "channels") -> None
 """) + """
-<p>Plays a float32 array: <code>(frames,)</code> for mono or <code>(channels, frames)</code>
-for multichannel. Converts to the device layout and resamples if the rate differs, then blocks
-until playback ends.</p>
+<p>Plays a float32 array: <code>(frames,)</code> for mono or, by default,
+<code>(channels, frames)</code> for multichannel. Pass <code>layout="frames"</code> for
+<code>(frames, channels)</code> — the layout <code>load</code> returns. Converts to the device
+layout and resamples if the rate differs, then blocks until playback ends.</p>
 <p>Raises <code>TypeError</code> for an unsupported dtype/dimensionality,
 <code>SoundRsError(code="usage")</code> for invalid rates, channel counts or non-finite
 samples, and <code>SoundRsError(code="device")</code> for device failures.</p>
@@ -935,7 +949,7 @@ stops playback on exit; the device stream closes when the object is destroyed.</
 <table>
   <tr><th>Signature</th><th>Returns</th><th>Notes</th></tr>
   <tr><td class="num">play_file(path)</td><td>None</td><td>Probes the header, then streams from disk and returns before playback finishes; path accepts <code>str</code> or <code>os.PathLike</code></td></tr>
-  <tr><td class="num">play_array(array, rate)</td><td>None</td><td>1D or 2D float32</td></tr>
+  <tr><td class="num">play_array(array, rate, layout="channels")</td><td>None</td><td>1D or 2D float32; <code>layout="frames"</code> for <code>(frames, channels)</code></td></tr>
   <tr><td class="num">play_samples(samples, src_channels, sample_rate)</td><td>None</td><td>Interleaved Python sequence, converted to float32; no NumPy required</td></tr>
   <tr><td class="num">pause()</td><td>None</td><td>Position freezes</td></tr>
   <tr><td class="num">resume()</td><td>None</td><td>Continues an active source; a finished feed requires begin_feed again</td></tr>
@@ -1170,6 +1184,14 @@ page(
     """
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="v070">0.7.0</h2>
+<p class="kicker">agent metadata</p>
+<ul>
+  <li><code>sound_rs.probe(path)</code> returns a metadata dictionary with codec, bit depth,
+      frames and duration, without decoding the whole file. Missing fields are <code>None</code>.</li>
+  <li><code>play_array(..., layout="frames")</code> accepts the same <code>(frames, channels)</code>
+      layout as <code>load</code>; the default remains channels-first for compatibility.</li>
+</ul>
 <h2 id="v060">0.6.0</h2>
 <p class="kicker">agent MCP</p>
 <ul>
@@ -1386,7 +1408,7 @@ Links
 <table>
   <tr><th>Command</th><th>What it does</th></tr>
   <tr><td class="num">soundrs play FILE</td><td>Plays a file and waits. <code>--device</code> picks an output device, <code>--volume</code> takes 0…4.</td></tr>
-  <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line.</td></tr>
+  <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line with frames, codec and bit depth.</td></tr>
   <tr><td class="num">soundrs convert IN OUT.wav</td><td>Decodes any supported input and writes PCM16, PCM24 or float32 WAV via <code>--subtype</code>.</td></tr>
   <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
   <tr><td class="num">soundrs mcp</td><td>Starts the MCP stdio server with <code>audio_info</code> and <code>convert</code> tools.</td></tr>
@@ -1419,7 +1441,7 @@ channels     2
 duration     42:13.6 (2533.612 s)
 
 $ soundrs info podcast.m4a --json
-{"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612}
+{"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612,"frames":111732289,"codec":"aac","bit_depth":null}
 """, "text") + note(
         "Exit codes",
         "<code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), "
