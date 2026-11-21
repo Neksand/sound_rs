@@ -1170,6 +1170,15 @@ page(
     """
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="v060">0.6.0</h2>
+<p class="kicker">agent MCP</p>
+<ul>
+  <li><code>soundrs mcp</code> starts a Model Context Protocol stdio server with
+      <code>audio_info</code> and <code>convert</code> tools. It never opens an audio device
+      and works in headless containers.</li>
+  <li>The MCP server has no extra runtime dependency and is covered by a stdio integration
+      test.</li>
+</ul>
 <h2 id="v051">0.5.1</h2>
 <p class="kicker">packaging</p>
 <ul>
@@ -1332,7 +1341,7 @@ from the list on the left.</p>
 page(
     "cli.html",
     "Command line",
-    "The soundrs command: play a file, inspect JSON metadata, convert to WAV, list output devices, and find the documentation from a terminal.",
+    "The soundrs command: play a file, inspect JSON metadata, convert to WAV, run an MCP server, list output devices, and find the documentation from a terminal.",
     """
 <p class="kicker">03 · Start</p>
 <h1>Command line</h1>
@@ -1352,6 +1361,7 @@ Usage
   soundrs convert <input> <output.wav> [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
+  soundrs mcp
   soundrs --version
   soundrs --help
 
@@ -1366,6 +1376,7 @@ Commands
            --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
+  mcp      Run the Model Context Protocol stdio server (audio_info, convert).
 
 Links
   Documentation  https://neksand.github.io/sound_rs/
@@ -1378,6 +1389,7 @@ Links
   <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line.</td></tr>
   <tr><td class="num">soundrs convert IN OUT.wav</td><td>Decodes any supported input and writes PCM16, PCM24 or float32 WAV via <code>--subtype</code>.</td></tr>
   <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
+  <tr><td class="num">soundrs mcp</td><td>Starts the MCP stdio server with <code>audio_info</code> and <code>convert</code> tools.</td></tr>
   <tr><td class="num">soundrs docs</td><td>Prints the documentation URL, for scripts and <code>open $(soundrs docs)</code>.</td></tr>
   <tr><td class="num">soundrs --version</td><td>Version on one line, safe to parse.</td></tr>
 </table>
@@ -1414,6 +1426,26 @@ $ soundrs info podcast.m4a --json
         "<code>2</code> bad usage. Errors go to stderr, so the commands compose in shell "
         "pipelines.",
     ) + """
+<h2 id="mcp">MCP server for AI agents</h2>
+<p><code>soundrs mcp</code> speaks the Model Context Protocol over stdio. It does not open
+an audio device. Tools:</p>
+<ul>
+  <li><code>audio_info(path)</code> — sample rate, channels and duration as JSON text.</li>
+  <li><code>convert(input, output, subtype=)</code> — decode any supported file to WAV.</li>
+</ul>
+""" + code("""
+{
+  "mcpServers": {
+    "sound_rs": {
+      "command": "soundrs",
+      "args": ["mcp"]
+    }
+  }
+}
+""", "json") + """
+<p>This works without an audio device, so it is suitable for containers and coding agents.
+The MCP client launches the server; paths are local to that process.</p>
+
 <h2 id="install-check">Checking an install</h2>
 <p>After <code>pip install sound_rs</code>:</p>
 """ + code("""

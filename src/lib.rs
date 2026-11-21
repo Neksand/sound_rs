@@ -7,6 +7,7 @@
 mod audio;
 mod cli;
 mod decoder;
+mod mcp;
 mod player;
 mod recorder;
 mod writer;

@@ -16,6 +16,7 @@ Usage
   soundrs convert <input> <output.wav> [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
+  soundrs mcp
   soundrs --version
   soundrs --help
 
@@ -30,6 +31,7 @@ Commands
            --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
+  mcp      Run the Model Context Protocol stdio server (audio_info, convert).
 
 Links
   Documentation  https://neksand.github.io/sound_rs/
@@ -44,6 +46,7 @@ Links
 | soundrs info FILE [--json] | Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing.  --json  prints one machine-readable line. |
 | soundrs convert IN OUT.wav | Decodes any supported input and writes PCM16, PCM24 or float32 WAV via  --subtype . |
 | soundrs devices | Output devices, the default marked with  * . |
+| soundrs mcp | Starts the MCP stdio server with  audio_info  and  convert  tools. |
 | soundrs docs | Prints the documentation URL, for scripts and  open $(soundrs docs) . |
 | soundrs --version | Version on one line, safe to parse. |
 
@@ -78,6 +81,27 @@ duration     42:13.6 (2533.612 s)
 $ soundrs info podcast.m4a --json
 {"file":"podcast.m4a","sample_rate":44100,"channels":2,"duration_seconds":2533.612}
 ```
+
+## MCP server for AI agents
+
+`soundrs mcp` speaks the Model Context Protocol over stdio. It does not open an audio device. Tools:
+
+- `audio_info(path)` — sample rate, channels and duration as JSON text.
+
+- `convert(input, output, subtype=)` — decode any supported file to WAV.
+
+```json
+{
+  "mcpServers": {
+    "sound_rs": {
+      "command": "soundrs",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+This works without an audio device, so it is suitable for containers and coding agents. The MCP client launches the server; paths are local to that process.
 
 ## Checking an install
 

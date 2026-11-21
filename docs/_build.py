@@ -648,6 +648,8 @@ def llms_txt(version):
         "destroy each Player/Recorder on the same thread. Playback waits release the GIL;",
         "preparation and teardown can still hold it. record_to captures in memory, then writes.",
         "The `soundrs` CLI supports `info --json` and `convert` for shell and agent workflows.",
+        "`soundrs mcp` starts a Model Context Protocol stdio server with `audio_info` and",
+        "`convert` tools; it never opens an audio device.",
         "",
         "Reading order for a coding task: Overview, Quickstart, then the guide for the job",
         "(player, datasets, recording, writing, numpy, migration), then the API reference.",

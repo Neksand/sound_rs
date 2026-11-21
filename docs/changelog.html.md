@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- `soundrs mcp` starts a Model Context Protocol stdio server with `audio_info` and `convert` tools. It never opens an audio device and works in headless containers.
+
+- The MCP server has no extra runtime dependency and is covered by a stdio integration test.
+
 ## 0.5.1
 
 - Publish an x86_64 `musllinux_1_2` wheel and smoke-test it in Alpine; the wheel bundles libasound, so `import sound_rs` and decoding need no system packages.

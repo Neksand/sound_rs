@@ -24,6 +24,7 @@ Usage
   soundrs convert <input> <output.wav> [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
+  soundrs mcp
   soundrs --version
   soundrs --help
 
@@ -38,6 +39,7 @@ Commands
            --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
+  mcp      Run the Model Context Protocol stdio server (audio_info, convert).
 
 Links
   Documentation  {docs}
@@ -50,6 +52,7 @@ pub(crate) enum Command {
     Version,
     Docs,
     Devices,
+    Mcp,
     Info {
         path: String,
         json: bool,
@@ -77,6 +80,7 @@ pub(crate) fn parse(args: &[String]) -> Command {
         "-V" | "--version" | "version" => Command::Version,
         "docs" => Command::Docs,
         "devices" => Command::Devices,
+        "mcp" => Command::Mcp,
         "info" => {
             let Some(path) = args.get(1).filter(|p| !p.starts_with("--")) else {
                 return Command::Fail("info needs a file path".to_string());
@@ -186,6 +190,7 @@ fn run(py: Python<'_>, command: Command) -> i32 {
             println!("{DOCS}");
             0
         }
+        Command::Mcp => crate::mcp::run(),
         Command::Devices => match crate::devices() {
             Ok(list) if list.is_empty() => {
                 eprintln!("No output devices found.");
@@ -324,6 +329,11 @@ mod tests {
     fn version_flags() {
         assert_eq!(parse(&args(&["--version"])), Command::Version);
         assert_eq!(parse(&args(&["-V"])), Command::Version);
+    }
+
+    #[test]
+    fn mcp_command_parses() {
+        assert_eq!(parse(&args(&["mcp"])), Command::Mcp);
     }
 
     #[test]

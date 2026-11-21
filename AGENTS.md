@@ -15,6 +15,7 @@ decoding to NumPy, and now WAV writing. No ffmpeg, no system decoders.
 | `src/audio.rs` | decoding (symphonia), gapless trim, MP4 edit list, resampling (rubato), channel conversion |
 | `src/player.rs` | the persistent output stream: `Player`, queue, fed streams, underruns |
 | `src/decoder.rs` | incremental `Decoder`: fixed-size blocks, optional resampling and mono |
+| `src/mcp.rs` | Model Context Protocol stdio server (`soundrs mcp`) |
 | `src/recorder.rs` | input devices and `Recorder` |
 | `src/writer.rs` | WAV encoding (`write`) |
 | `src/cli.rs` | the `soundrs` command |

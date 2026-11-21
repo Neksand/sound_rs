@@ -16,9 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.5.1](https://github.com/Neksand/sound_rs/releases/tag/v0.5.1) — adds an
-x86_64 musllinux wheel and Alpine smoke test, with the 0.5.0 streaming Decoder, agent CLI,
-formats and one Symphonia MP3 decoder. Guides for coding agents:
+**Latest release:** [0.6.0](https://github.com/Neksand/sound_rs/releases/tag/v0.6.0) — adds
+`soundrs mcp` for AI-agent tool calls, on top of the 0.5.x streaming Decoder, CLI, formats and
+musllinux wheel. Guides for coding agents:
 [llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](https://github.com/Neksand/sound_rs/blob/master/AGENTS.md).
 
 ---
@@ -61,6 +61,8 @@ formats and one Symphonia MP3 decoder. Guides for coding agents:
 - **No external decoder:** MP3, FLAC, OGG, AAC, ALAC, AIFF, CAF and WAV decoders are inside the wheel.
   Linux wheels bundle the ALSA runtime; source builds need ALSA development headers. NumPy is
   required for array APIs
+- **CLI and MCP:** `soundrs info --json`, `soundrs convert`, and `soundrs mcp` for
+  agent tool calls without opening an audio device
 - **Typed:** ships `sound_rs.pyi` and `py.typed`, so editors autocomplete everything
 
 ---
@@ -91,6 +93,7 @@ soundrs devices      # output devices, default marked with *
 soundrs info a.flac  # rate, channels, duration; decodes if the header is incomplete
 soundrs info a.flac --json
 soundrs convert a.mp3 a.wav --subtype pcm24
+soundrs mcp          # MCP stdio server for agents
 soundrs play a.flac --volume 0.5
 soundrs docs         # prints https://neksand.github.io/sound_rs/
 ```

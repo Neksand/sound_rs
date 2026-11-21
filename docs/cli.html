@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Command line — sound_rs docs</title>
-<meta name="description" content="The soundrs command: play a file, inspect JSON metadata, convert to WAV, list output devices, and find the documentation from a terminal.">
+<meta name="description" content="The soundrs command: play a file, inspect JSON metadata, convert to WAV, run an MCP server, list output devices, and find the documentation from a terminal.">
 <link rel="canonical" href="https://neksand.github.io/sound_rs/cli.html">
 <link rel="alternate" type="text/markdown" href="cli.html.md">
 <link rel="describedby" href="llms.txt">
 <meta property="og:title" content="Command line — sound_rs docs">
-<meta property="og:description" content="The soundrs command: play a file, inspect JSON metadata, convert to WAV, list output devices, and find the documentation from a terminal.">
+<meta property="og:description" content="The soundrs command: play a file, inspect JSON metadata, convert to WAV, run an MCP server, list output devices, and find the documentation from a terminal.">
 <meta property="og:type" content="article">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/app.js" defer></script>
@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.5.1</span>
+  <span class="ver">v0.6.0</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -44,6 +44,7 @@ Usage
   soundrs convert &lt;input&gt; &lt;output.wav&gt; [--subtype pcm16|pcm24|float32]
   soundrs devices
   soundrs docs
+  soundrs mcp
   soundrs --version
   soundrs --help
 
@@ -58,6 +59,7 @@ Commands
            --subtype pcm16|pcm24|float32   sample format, default pcm16
   devices  Output devices, one per line.
   docs     Print the documentation link.
+  mcp      Run the Model Context Protocol stdio server (audio_info, convert).
 
 Links
   Documentation  https://neksand.github.io/sound_rs/
@@ -69,6 +71,7 @@ Links
   <tr><td class="num">soundrs info FILE [--json]</td><td>Sample rate, channel count and duration; reads the header when complete and decodes only when duration or format information is missing. <code>--json</code> prints one machine-readable line.</td></tr>
   <tr><td class="num">soundrs convert IN OUT.wav</td><td>Decodes any supported input and writes PCM16, PCM24 or float32 WAV via <code>--subtype</code>.</td></tr>
   <tr><td class="num">soundrs devices</td><td>Output devices, the default marked with <code>*</code>.</td></tr>
+  <tr><td class="num">soundrs mcp</td><td>Starts the MCP stdio server with <code>audio_info</code> and <code>convert</code> tools.</td></tr>
   <tr><td class="num">soundrs docs</td><td>Prints the documentation URL, for scripts and <code>open $(soundrs docs)</code>.</td></tr>
   <tr><td class="num">soundrs --version</td><td>Version on one line, safe to parse.</td></tr>
 </table>
@@ -96,6 +99,24 @@ duration     42:13.6 (2533.612 s)
 
 $ soundrs info podcast.m4a --json
 {&quot;file&quot;:&quot;podcast.m4a&quot;,&quot;sample_rate&quot;:44100,&quot;channels&quot;:2,&quot;duration_seconds&quot;:2533.612}</code></pre><div class="note"><b>Exit codes</b><code>0</code> success, <code>1</code> runtime failure (unreadable file, no device), <code>2</code> bad usage. Errors go to stderr, so the commands compose in shell pipelines.</div>
+<h2 id="mcp">MCP server for AI agents</h2>
+<p><code>soundrs mcp</code> speaks the Model Context Protocol over stdio. It does not open
+an audio device. Tools:</p>
+<ul>
+  <li><code>audio_info(path)</code> — sample rate, channels and duration as JSON text.</li>
+  <li><code>convert(input, output, subtype=)</code> — decode any supported file to WAV.</li>
+</ul>
+<pre data-lang="json"><code>{
+  &quot;mcpServers&quot;: {
+    &quot;sound_rs&quot;: {
+      &quot;command&quot;: &quot;soundrs&quot;,
+      &quot;args&quot;: [&quot;mcp&quot;]
+    }
+  }
+}</code></pre>
+<p>This works without an audio device, so it is suitable for containers and coding agents.
+The MCP client launches the server; paths are local to that process.</p>
+
 <h2 id="install-check">Checking an install</h2>
 <p>After <code>pip install sound_rs</code>:</p>
 <pre data-lang="bash"><code>soundrs --version      # soundrs 0.2.2
@@ -107,10 +128,10 @@ output device at all.</p>
 
 <div class="next"><a href="quickstart.html">← Quickstart</a><a href="player.html">The player →</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#commands">Commands</a><a href="#examples">Examples</a><a href="#install-check">Checking an install</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#commands">Commands</a><a href="#examples">Examples</a><a href="#mcp">MCP server for AI agents</a><a href="#install-check">Checking an install</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.5.1 — MIT</span>
+  <span>sound_rs v0.6.0 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
