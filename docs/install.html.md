@@ -10,7 +10,7 @@ pip install sound_rs
 
 - Python 3.10 or newer, CPython.
 
-- Linux x86_64 or aarch64, Windows amd64, macOS arm64 or Intel — all ship wheels.
+- Linux x86_64 or aarch64, Linux x86_64 musl, Windows amd64, macOS arm64 or Intel — all ship wheels.
 
 - NumPy for array playback, loading, writing and recording arrays: install with `pip install 'sound_rs[numpy]'`.
 
@@ -18,11 +18,12 @@ pip install sound_rs
 |---|---|---|
 | Linux x86_64 | cp310-abi3-manylinux_2_17_x86_64 | 3.10+ |
 | Linux aarch64 | cp310-abi3-manylinux_2_17_aarch64 | 3.10+ |
+| Linux x86_64 musl | cp310-abi3-musllinux_1_2_x86_64 | 3.10+ |
 | Windows amd64 | cp310-abi3-win_amd64 | 3.10+ |
 | macOS arm64 | cp310-abi3-macosx_11_0_arm64 | 3.10+ |
 | macOS Intel | cp310-abi3-macosx_10_12_x86_64 | 3.10+ |
 
-The wheels use the stable ABI, so one file covers every Python from 3.10 up — the same wheel installs on 3.10 through 3.14. Anything else (musl, PyPy, other architectures) falls back to the source distribution, which needs a Rust toolchain.
+The wheels use the stable ABI, so one file covers every Python from 3.10 up — the same wheel installs on 3.10 through 3.14. Other musl architectures, PyPy and other architectures fall back to the source distribution, which needs a Rust toolchain.
 
 ## From source
 

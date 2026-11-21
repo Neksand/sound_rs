@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.5.0</span>
+  <span class="ver">v0.5.1</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -31,6 +31,15 @@
 
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="v051">0.5.1</h2>
+<p class="kicker">packaging</p>
+<ul>
+  <li>Publish an x86_64 <code>musllinux_1_2</code> wheel and smoke-test it in Alpine; the
+      wheel bundles libasound, so <code>import sound_rs</code> and decoding need no system
+      packages.</li>
+  <li>Release validation checks the bundled ALSA runtime instead of installing a host copy.</li>
+</ul>
+
 <h2 id="v050">0.5.0</h2>
 <p class="kicker">streaming, formats, agent CLI</p>
 <ul>
@@ -161,10 +170,10 @@
 
 <div class="next"><a href="faq.html">← Troubleshooting</a></div>
   </main>
-  <aside class="toc"><h2>On this page</h2><a href="#v050">0.5.0</a><a href="#v042">0.4.2</a><a href="#v041">0.4.1</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
+  <aside class="toc"><h2>On this page</h2><a href="#v051">0.5.1</a><a href="#v050">0.5.0</a><a href="#v042">0.4.2</a><a href="#v041">0.4.1</a><a href="#v040">0.4.0</a><a href="#v032">0.3.2</a><a href="#v031">0.3.1</a><a href="#v030">0.3.0</a><a href="#v022">0.2.2</a><a href="#v021">0.2.1</a><a href="#v020">0.2.0</a><a href="#v018">0.1.8</a><a href="#v017">0.1.7</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.5.0 — MIT</span>
+  <span>sound_rs v0.5.1 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>

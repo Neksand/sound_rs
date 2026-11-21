@@ -16,9 +16,9 @@ output through [cpal](https://github.com/RustAudio/cpal).
 **Documentation:** [neksand.github.io/sound_rs](https://neksand.github.io/sound_rs/) — guides,
 API reference, the `soundrs` command and the benchmark methodology.
 
-**Latest release:** [0.5.0](https://github.com/Neksand/sound_rs/releases/tag/v0.5.0) — streaming
-`Decoder`, `write_bytes`, `load_many(on_error="skip")`, `info --json`/`convert` in the CLI,
-AIFF/CAF/ALAC, pathlib paths, and one Symphonia MP3 decoder. Guides for coding agents:
+**Latest release:** [0.5.1](https://github.com/Neksand/sound_rs/releases/tag/v0.5.1) — adds an
+x86_64 musllinux wheel and Alpine smoke test, with the 0.5.0 streaming Decoder, agent CLI,
+formats and one Symphonia MP3 decoder. Guides for coding agents:
 [llms.txt](https://neksand.github.io/sound_rs/llms.txt) and [AGENTS.md](https://github.com/Neksand/sound_rs/blob/master/AGENTS.md).
 
 ---
@@ -72,8 +72,8 @@ pip install sound_rs
 ```
 
 Wheels are built with the stable ABI (`abi3-py310`): one per platform — Linux
-x86_64 and aarch64, Windows amd64, macOS arm64 and Intel — each covering Python
-3.10 and newer. Other platforms build from source.
+x86_64 and aarch64 (glibc), Linux x86_64 (musl), Windows amd64, macOS arm64 and
+Intel — each covering Python 3.10 and newer. Other platforms build from source.
 
 For loading, writing, array playback and recording arrays, use `pip install 'sound_rs[numpy]'`.
 Python argument conversion may raise `TypeError` or `OverflowError`; float64 arrays are rejected.

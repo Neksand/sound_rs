@@ -83,7 +83,7 @@ pip install sound_rs
 <h2 id="requirements">Requirements</h2>
 <ul>
   <li>Python 3.10 or newer, CPython.</li>
-  <li>Linux x86_64 or aarch64, Windows amd64, macOS arm64 or Intel — all ship wheels.</li>
+  <li>Linux x86_64 or aarch64, Linux x86_64 musl, Windows amd64, macOS arm64 or Intel — all ship wheels.</li>
   <li>NumPy for array playback, loading, writing and recording arrays:
       install with <code>pip install 'sound_rs[numpy]'</code>.</li>
 </ul>
@@ -92,14 +92,15 @@ pip install sound_rs
   <tr><th>Platform</th><th>Wheel tag</th><th>Python</th></tr>
   <tr><td>Linux x86_64</td><td class="num">cp310-abi3-manylinux_2_17_x86_64</td><td class="num">3.10+</td></tr>
   <tr><td>Linux aarch64</td><td class="num">cp310-abi3-manylinux_2_17_aarch64</td><td class="num">3.10+</td></tr>
+  <tr><td>Linux x86_64 musl</td><td class="num">cp310-abi3-musllinux_1_2_x86_64</td><td class="num">3.10+</td></tr>
   <tr><td>Windows amd64</td><td class="num">cp310-abi3-win_amd64</td><td class="num">3.10+</td></tr>
   <tr><td>macOS arm64</td><td class="num">cp310-abi3-macosx_11_0_arm64</td><td class="num">3.10+</td></tr>
   <tr><td>macOS Intel</td><td class="num">cp310-abi3-macosx_10_12_x86_64</td><td class="num">3.10+</td></tr>
 </table>
 
 <p>The wheels use the stable ABI, so one file covers every Python from 3.10 up — the same
-wheel installs on 3.10 through 3.14. Anything else (musl, PyPy, other architectures) falls
-back to the source distribution, which needs a Rust toolchain.</p>
+wheel installs on 3.10 through 3.14. Other musl architectures, PyPy and other architectures
+fall back to the source distribution, which needs a Rust toolchain.</p>
 
 <h2 id="from-source">From source</h2>
 """ + code("""
@@ -119,9 +120,9 @@ sudo apt install libasound2-dev      # Debian / Ubuntu
 sudo dnf install alsa-lib-devel      # Fedora
 """, "bash") + note(
         "Alpine and musl",
-        "musllinux wheels are not published yet. Alpine falls back to the source distribution, "
-        "which needs Rust plus <code>alsa-lib-dev</code>. The wheel does not require a separate "
-        "ALSA runtime install.",
+        "An x86_64 musllinux wheel is published. Other musl architectures fall back to the "
+        "source distribution, which needs Rust plus <code>alsa-lib-dev</code>. The wheel does "
+        "not require a separate ALSA runtime install.",
     ) + """
 <h2 id="check">Check it works</h2>
 """ + code("""
@@ -1169,6 +1170,15 @@ page(
     """
 <p class="kicker">12 · Reference</p>
 <h1>Changelog</h1>
+<h2 id="v051">0.5.1</h2>
+<p class="kicker">packaging</p>
+<ul>
+  <li>Publish an x86_64 <code>musllinux_1_2</code> wheel and smoke-test it in Alpine; the
+      wheel bundles libasound, so <code>import sound_rs</code> and decoding need no system
+      packages.</li>
+  <li>Release validation checks the bundled ALSA runtime instead of installing a host copy.</li>
+</ul>
+
 <h2 id="v050">0.5.0</h2>
 <p class="kicker">streaming, formats, agent CLI</p>
 <ul>

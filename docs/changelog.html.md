@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Publish an x86_64 `musllinux_1_2` wheel and smoke-test it in Alpine; the wheel bundles libasound, so `import sound_rs` and decoding need no system packages.
+
+- Release validation checks the bundled ALSA runtime instead of installing a host copy.
+
 ## 0.5.0
 
 - `sound_rs.Decoder`: bounded-memory incremental reads with optional resampling and mono folding, iteration, `read()` and context management.

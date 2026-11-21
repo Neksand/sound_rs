@@ -18,7 +18,7 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <a class="brand" href="index.html">sound_rs</a>
-  <span class="ver">v0.5.0</span>
+  <span class="ver">v0.5.1</span>
   <nav aria-label="External">
     <button type="button" data-search>Search <kbd>/</kbd></button>
     <a href="https://pypi.org/project/sound-rs/">PyPI</a>
@@ -38,7 +38,7 @@ are needed.</p>
 <h2 id="requirements">Requirements</h2>
 <ul>
   <li>Python 3.10 or newer, CPython.</li>
-  <li>Linux x86_64 or aarch64, Windows amd64, macOS arm64 or Intel — all ship wheels.</li>
+  <li>Linux x86_64 or aarch64, Linux x86_64 musl, Windows amd64, macOS arm64 or Intel — all ship wheels.</li>
   <li>NumPy for array playback, loading, writing and recording arrays:
       install with <code>pip install 'sound_rs[numpy]'</code>.</li>
 </ul>
@@ -47,14 +47,15 @@ are needed.</p>
   <tr><th>Platform</th><th>Wheel tag</th><th>Python</th></tr>
   <tr><td>Linux x86_64</td><td class="num">cp310-abi3-manylinux_2_17_x86_64</td><td class="num">3.10+</td></tr>
   <tr><td>Linux aarch64</td><td class="num">cp310-abi3-manylinux_2_17_aarch64</td><td class="num">3.10+</td></tr>
+  <tr><td>Linux x86_64 musl</td><td class="num">cp310-abi3-musllinux_1_2_x86_64</td><td class="num">3.10+</td></tr>
   <tr><td>Windows amd64</td><td class="num">cp310-abi3-win_amd64</td><td class="num">3.10+</td></tr>
   <tr><td>macOS arm64</td><td class="num">cp310-abi3-macosx_11_0_arm64</td><td class="num">3.10+</td></tr>
   <tr><td>macOS Intel</td><td class="num">cp310-abi3-macosx_10_12_x86_64</td><td class="num">3.10+</td></tr>
 </table>
 
 <p>The wheels use the stable ABI, so one file covers every Python from 3.10 up — the same
-wheel installs on 3.10 through 3.14. Anything else (musl, PyPy, other architectures) falls
-back to the source distribution, which needs a Rust toolchain.</p>
+wheel installs on 3.10 through 3.14. Other musl architectures, PyPy and other architectures
+fall back to the source distribution, which needs a Rust toolchain.</p>
 
 <h2 id="from-source">From source</h2>
 <pre data-lang="bash"><code>git clone https://github.com/Neksand/sound_rs
@@ -68,7 +69,7 @@ work in a slim container without installing system packages. Playback still need
 device; with none, it raises <code>SoundRsError(code="device")</code>.</p>
 <p>Source builds need the ALSA development headers:</p>
 <pre data-lang="bash"><code>sudo apt install libasound2-dev      # Debian / Ubuntu
-sudo dnf install alsa-lib-devel      # Fedora</code></pre><div class="note"><b>Alpine and musl</b>musllinux wheels are not published yet. Alpine falls back to the source distribution, which needs Rust plus <code>alsa-lib-dev</code>. The wheel does not require a separate ALSA runtime install.</div>
+sudo dnf install alsa-lib-devel      # Fedora</code></pre><div class="note"><b>Alpine and musl</b>An x86_64 musllinux wheel is published. Other musl architectures fall back to the source distribution, which needs Rust plus <code>alsa-lib-dev</code>. The wheel does not require a separate ALSA runtime install.</div>
 <h2 id="check">Check it works</h2>
 <pre data-lang=""><code>import sound_rs
 
@@ -84,7 +85,7 @@ documentation link. See <a href="cli.html">Command line</a>.</p>
   <aside class="toc"><h2>On this page</h2><a href="#requirements">Requirements</a><a href="#from-source">From source</a><a href="#linux-audio">Linux audio</a><a href="#check">Check it works</a></aside>
 </div>
 <footer>
-  <span>sound_rs v0.5.0 — MIT</span>
+  <span>sound_rs v0.5.1 — MIT</span>
   <a href="https://github.com/Neksand/sound_rs">Source</a>
   <a href="https://pypi.org/project/sound-rs/">PyPI</a>
   <a href="https://github.com/Neksand/sound_rs/issues">Issues</a>
