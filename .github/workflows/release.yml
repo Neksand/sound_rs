@@ -71,8 +71,37 @@ jobs:
           name: sdist
           path: dist/*.tar.gz
 
+  wheels-musl:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          # musllinux container uses apk; cpal needs ALSA headers at build time
+          before-script-linux: apk add --no-cache alsa-lib-dev pkgconf
+          manylinux: musllinux_1_2
+          args: --release --out dist
+      - name: Check bundled ALSA runtime
+        run: unzip -l dist/*.whl | grep -q 'sound_rs.libs/libasound'
+      - name: Smoke in Alpine
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work python:3.12-alpine sh -c '
+            python -m pip install --no-cache-dir numpy &&
+            python -m pip install --no-cache-dir --no-deps --no-index --find-links dist sound_rs &&
+            python tests/smoke.py
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-musl-x86_64
+          path: dist/*.whl
+
   publish:
-    needs: [wheels, sdist]
+    needs: [wheels, wheels-musl, sdist]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: pypi
