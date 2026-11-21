@@ -1051,8 +1051,14 @@ mod opus_fuzz {
     #[test]
     fn mutated_opus_does_not_panic() {
         for path in [
-            "/tmp/opus_fixtures/t3s_stereo.opus",
-            "/tmp/opus_fixtures/t3s_stereo.webm",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/tone_opus_stereo.opus"
+            ),
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/tone_opus_stereo.webm"
+            ),
         ] {
             let base = std::fs::read(path).unwrap();
             let mut state = 0x1234_5678u64;
