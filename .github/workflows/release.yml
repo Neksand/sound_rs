@@ -76,25 +76,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          # musllinux container uses apk; cpal needs ALSA headers at build time
-          before-script-linux: apk add --no-cache alsa-lib-dev pkgconf
-          manylinux: musllinux_1_2
-          args: --release --out dist
+      - name: Build and smoke-test in Alpine
+        run: |
+          docker run --rm -v "$PWD:/io" -w /io python:3.12-alpine sh -c '
+            apk add --no-cache build-base python3-dev py3-pip py3-numpy alsa-lib-dev pkgconf patchelf wget &&
+            wget -qO- https://github.com/PyO3/maturin/releases/download/v1.16.0/maturin-$(uname -m)-unknown-linux-musl.tar.gz | tar xz -C /usr/local/bin &&
+            maturin build --release --out dist &&
+            python3 -m pip install --break-system-packages --no-deps --no-index --find-links dist sound_rs &&
+            python3 tests/smoke.py
+          '
       - name: Check bundled ALSA runtime
         run: unzip -l dist/*.whl | grep -q 'sound_rs.libs/libasound'
-      - name: Smoke in Alpine
-        run: |
-          docker run --rm -v "$PWD:/work" -w /work python:3.12-alpine sh -c '
-            python -m pip install --no-cache-dir numpy &&
-            python -m pip install --no-cache-dir --no-deps --no-index --find-links dist sound_rs &&
-            python tests/smoke.py
-          '
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-linux-musl-x86_64
